@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: pvp-wow
+  datasource:
+    url: jdbc:postgresql://localhost:5432/pvpwow
+    username: pvpwow
+    password: pvpwow
+  jpa:
+    hibernate:
+      # TODO(persistence-step): replace with Flyway-managed schema.
+      ddl-auto: update
