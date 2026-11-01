@@ -121,7 +121,7 @@ Class (not a record) in `domain.character`. State: `CharacterId id`,
 |-------|------|-------|
 | `Username` | `domain.player`, `record(String value)` | Trim; 3–24 chars; only letters, digits, `.`, `_`, `-`; must start with a letter |
 | `BattleTag` | `domain.player`, `record(String value)` | Battle.net contact identity — account-level, not per character. Trim; lowercase the name part. Format: 3–12 alphanumerics, `#`, 4–5 digits (e.g. `emilio#12345`) |
-| `Player` | `domain.player`, `record(PlayerId id, Username username, BattleTag battleTag)` | Stub-phase aggregate. The battle tag is required: it is the ONLY contact channel in the product. Battle.net OAuth later enriches this concept, never replaces it |
+| `Player` | `domain.player`, **class** | Stub-phase aggregate root. State: `PlayerId id`, `Username username`, `BattleTag battleTag`. Same pattern as `Character`: two doors (`register` generates the id, `rehydrate` receives it), no setters, `equals`/`hashCode` **by id only** — a record here would give structural equality, and a player who changes battle tag would stop being the same player. The battle tag is required: it is the ONLY contact channel in the product. Battle.net OAuth later enriches this concept, never replaces it |
 
 ## WU4 — Listing value objects
 
