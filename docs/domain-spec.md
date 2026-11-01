@@ -40,7 +40,7 @@ Get-ChildItem -Recurse src\main\java\com\pvpwow\lfg\domain -Filter *.java |
 | `Region` | `domain.character` | enum | `EU`, `US`, `KR`, `TW`, `CN` — rated PvP is cross-realm within a region only |
 | `WowClass` | `domain.character` | enum | 13 constants (see below) |
 | `Specialization` | `domain.character` | enum | 39 constants, each carrying its `WowClass`; static `forClass(WowClass)` returns the `Set` of its specs (see below) |
-| `Rating` | `domain.character` | `record(int value)` | `0..3500` inclusive |
+| `Rating` | `domain.character` | `record(int value)` | `0..3500` inclusive. Named `Rating` (visible CR), not `Mmr`: what players report by hand is their CR; MMR is Blizzard's hidden matchmaking value |
 
 `WowClass` constants: `DEATH_KNIGHT, DEMON_HUNTER, DRUID, EVOKER, HUNTER, MAGE,
 MONK, PALADIN, PRIEST, ROGUE, SHAMAN, WARLOCK, WARRIOR`.
@@ -75,6 +75,9 @@ Class (not a record) in `domain.character`. State: `CharacterId id`,
 - Factory rules: `specs` non-empty AND every spec belongs to `wowClass`
   (hint: `Specialization.forClass(wowClass).containsAll(specs)`); defensive
   immutable copies of `specs` and `ratings`.
+- `ratings` may be empty or partial — a rating per bracket is optional; an
+  unranked bracket simply has no entry (`ratingFor` returns empty). The search
+  use case (later step) must define how unranked listings sort.
 - `equals`/`hashCode` by `id` only.
 - Queries: `ratingFor(Bracket)` → `Optional<Rating>`, `plays(Specialization)` →
   `boolean`.
@@ -84,7 +87,8 @@ Class (not a record) in `domain.character`. State: `CharacterId id`,
 | Class | Kind | Rules |
 |-------|------|-------|
 | `Username` | `domain.player`, `record(String value)` | Trim; 3–24 chars; only letters, digits, `.`, `_`, `-`; must start with a letter |
-| `Player` | `domain.player`, `record(PlayerId id, Username username)` | Stub-phase aggregate; Battle.net identity replaces the content later, not the concept |
+| `BattleTag` | `domain.player`, `record(String value)` | Battle.net contact identity — account-level, not per character. Trim; lowercase the name part. Format: 3–12 alphanumerics, `#`, 4–5 digits (e.g. `emilio#12345`) |
+| `Player` | `domain.player`, `record(PlayerId id, Username username, BattleTag battleTag)` | Stub-phase aggregate. The battle tag is required: it is the ONLY contact channel in the product. Battle.net OAuth later enriches this concept, never replaces it |
 
 ## WU4 — Listing value objects
 
