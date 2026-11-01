@@ -41,8 +41,8 @@ Get-ChildItem -Recurse src\main\java\com\pvpwow\lfg\domain -Filter *.java |
 | `WowClass` | `domain.character` | enum | 13 constants (see below) |
 | `Specialization` | `domain.character` | enum | 39 constants, each carrying its `WowClass` AND its `Role`; static `forClass(WowClass)` returns the `Set` of its specs (see below) |
 | `Role` | `domain.character` | enum | `TANK`, `HEALER`, `MELEE_DPS`, `RANGED_DPS` — the melee/ranged split is the first question when building an arena comp; the classic 3-way split is too coarse. Roles belong to specs, never to classes |
-| `Rating` | `domain.character` | `record(int value)` | `0..3500` inclusive. Named `Rating` (visible CR), not `Mmr`: what players report by hand is their CR; MMR is Blizzard's hidden matchmaking value |
-| `ItemLevel` | `domain.character` | `record(int value)` | `1..1000` inclusive. Deliberately loose — ilvl caps change every season and expansion, and tight validation rots. Required on every character: gear determines arena readiness |
+| `Rating` | `domain.character` | `record(int value)` | `>= 0` — impossibility only. The old `0..3500` cap was a plausibility guess pretending to be an invariant: cutoffs move, and the observed truth will come from the Blizzard API. Named `Rating` (visible CR), not `Mmr`: what players report by hand is their CR; MMR is Blizzard's hidden matchmaking value |
+| `ItemLevel` | `domain.character` | `record(int value)` | `> 0` — impossibility only. Plausibility ("is 900 believable this season?") is modeled NOWHERE, not even as a policy: caps move every season, and the observed truth will come from the Blizzard API. Required on every character: gear determines arena readiness |
 | `Bracket` | `domain.character` | enum | `TWO_VS_TWO` (teamSize 2), `THREE_VS_THREE` (teamSize 3). Character package, not listing: ratings-per-bracket need it here and package dependencies flow listing → character, never the reverse |
 
 `WowClass` constants: `DEATH_KNIGHT, DEMON_HUNTER, DRUID, EVOKER, HUNTER, MAGE,
