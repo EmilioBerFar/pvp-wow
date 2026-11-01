@@ -113,6 +113,20 @@ class LfgListingTest {
     }
 
     @Test
+    void expireIfDueOnACancelledListingIsANoOpThatReturnsFalse() {
+        // The expiration job sweeps every listing, including ones the player
+        // cancelled seconds before their deadline. Terminal state wins: the
+        // sweep must neither resurrect the listing nor crash on it — it just
+        // reports "nothing transitioned".
+        LfgListing listing = publishListing();
+        listing.cancel();
+
+        assertThat(listing.expireIfDue(NOW.plus(TTL).plusSeconds(60))).isFalse();
+        assertThat(listing.status()).isEqualTo(ListingStatus.CANCELLED);
+        assertThat(listing.isActive()).isFalse();
+    }
+
+    @Test
     void sameIdMeansSameListingEvenAfterAStateChange() {
         LfgListing original = publishListing();
         LfgListing rehydrated = LfgListing.rehydrate(original.id(), original.characterId(),
