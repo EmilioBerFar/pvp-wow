@@ -189,6 +189,43 @@ status`, `Instant createdAt`, `Instant expiresAt`.
 
 The JSON file and the catalog port are NOT yours — that is the adapter step.
 
+## WU7 — RegisterCharacter (application layer, first use case)
+
+| Piece | Package | Content |
+|---|---|---|
+| Driving port | `application.port.in` | `RegisterCharacter` interface, nested `RegisterCharacterCommand` |
+| Driven ports | `application.port.out` | `Characters` (save + `alreadyRegistered`), `CurrentPlayerProvider` (X-Player-Id stub phase), `Seasons` (`current()`) |
+| Service | `application.service` | `RegisterCharacterService` — orchestrates through the out ports |
+
+- **Command shape — the declared/observed seam applied to the contract**
+  (decided 2026-11-01, option C): declared facts arrive as value objects
+  (name, realm, region, class, the specs the player is willing to play) —
+  pure data, valid by construction, nothing left to add. Observed facts
+  arrive RAW (`int itemLevel`, `Map<Bracket, Integer> ratings`) on purpose:
+  the use case is the witness, so it owns the stamps. The policy "a
+  self-report is observed at registration" lives where registration happens;
+  every future adapter (CLI, Blizzard sync) inherits it instead of
+  re-deciding it.
+- Ratings are OPTIONAL at registration (product decision from day one); a
+  missing bracket simply stays unranked. A rating needs its season, hence the
+  `Seasons` port — the active season is an operational fact (config in
+  bootstrap, the Blizzard sync later).
+- `ownerId` never travels in the command: the use case asks
+  `CurrentPlayerProvider` who is calling.
+- **Uniqueness (region, realm, name)**: friendly pre-check through the port
+  (`alreadyRegistered` → `DomainRuleViolationException` "already
+  registered"). Advisory by nature — two simultaneous registrations can race
+  past it until the persistence step adds the unique index; the index is the
+  law, the pre-check is UX.
+- `RegisterCharacterService` stamps with an injected `java.time.Clock`;
+  tests use `Clock.fixed`, so the stamps are assertable to the exact instant.
+- Behavior tests use HAND-ROLLED fakes of the out ports — that is what ports
+  are for. Domain tests stay mockless; application tests fake the edges. No
+  Spring context, no database: the application layer is testable in pure JUnit.
+- Wiring (REST controller + advice, config-backed `Seasons`, dev
+  `CurrentPlayerProvider` reading `X-Player-Id`, JPA `Characters`) is the
+  adapters step, not this one.
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
@@ -240,14 +277,8 @@ own steps: JPA mapping and Flyway (persistence step), the Blizzard API client
 
 ## Next step
 
-The domain phase is complete (WU1–WU6, architecture rules, CI). Next: the
-application layer, starting with WU7 — `RegisterCharacter`. Three forks to
-decide before typing:
-
-1. Command shape: value objects in the command (the adapter builds them, the
-   domain validates by construction) vs primitives in the command (the use
-   case owns validation).
-2. `name + realm` uniqueness: friendly pre-check through the repository port
-   plus a DB unique index as the race-proof last line — or DB index only.
-3. What registration captures: bare identity, or full self-report (gear
-   snapshot and standings stamped at registration time).
+WU7 (RegisterCharacter: ports, command, service, behavior tests) is done.
+Next: the adapters step — REST controller + advice (ProblemDetail per the
+error strategy), config-backed `Seasons`, dev `CurrentPlayerProvider` reading
+`X-Player-Id`, and the JPA `Characters` adapter with Flyway and the unique
+index on (region, realm, name) that makes the pre-check's promise real.
