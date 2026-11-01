@@ -39,7 +39,8 @@ Get-ChildItem -Recurse src\main\java\com\pvpwow\lfg\domain -Filter *.java |
 | `Realm` | `domain.character` | `record(String value)` | Trim; collapse inner whitespace runs to one space; lowercase. `"Sanguino"` equals `"sanguino"`. Display casing is a render concern, not a domain concern |
 | `Region` | `domain.character` | enum | `EU`, `US`, `KR`, `TW`, `CN` — rated PvP is cross-realm within a region only |
 | `WowClass` | `domain.character` | enum | 13 constants (see below) |
-| `Specialization` | `domain.character` | enum | 39 constants, each carrying its `WowClass`; static `forClass(WowClass)` returns the `Set` of its specs (see below) |
+| `Specialization` | `domain.character` | enum | 39 constants, each carrying its `WowClass` AND its `Role`; static `forClass(WowClass)` returns the `Set` of its specs (see below) |
+| `Role` | `domain.character` | enum | `TANK`, `HEALER`, `MELEE_DPS`, `RANGED_DPS` — the melee/ranged split is the first question when building an arena comp; the classic 3-way split is too coarse. Roles belong to specs, never to classes |
 | `Rating` | `domain.character` | `record(int value)` | `0..3500` inclusive. Named `Rating` (visible CR), not `Mmr`: what players report by hand is their CR; MMR is Blizzard's hidden matchmaking value |
 
 `WowClass` constants: `DEATH_KNIGHT, DEMON_HUNTER, DRUID, EVOKER, HUNTER, MAGE,
@@ -64,6 +65,24 @@ repeat across classes):
 | WARLOCK | `WARLOCK_AFFLICTION`, `WARLOCK_DEMONOLOGY`, `WARLOCK_DESTRUCTION` |
 | WARRIOR | `WARRIOR_ARMS`, `WARRIOR_FURY`, `WARRIOR_PROTECTION` |
 
+Role assignment (the second field of every `Specialization` constant):
+
+| Class | TANK | HEALER | MELEE_DPS | RANGED_DPS |
+|-------|------|--------|-----------|------------|
+| DEATH_KNIGHT | `DEATH_KNIGHT_BLOOD` | — | `DEATH_KNIGHT_FROST`, `DEATH_KNIGHT_UNHOLY` | — |
+| DEMON_HUNTER | `DEMON_HUNTER_VENGEANCE` | — | `DEMON_HUNTER_HAVOC` | — |
+| DRUID | `DRUID_GUARDIAN` | `DRUID_RESTORATION` | `DRUID_FERAL` | `DRUID_BALANCE` |
+| EVOKER | — | `EVOKER_PRESERVATION` | — | `EVOKER_DEVASTATION`, `EVOKER_AUGMENTATION` |
+| HUNTER | — | — | `HUNTER_SURVIVAL` | `HUNTER_BEAST_MASTERY`, `HUNTER_MARKSMANSHIP` |
+| MAGE | — | — | — | `MAGE_ARCANE`, `MAGE_FIRE`, `MAGE_FROST` |
+| MONK | `MONK_BREWMASTER` | `MONK_MISTWEAVER` | `MONK_WINDWALKER` | — |
+| PALADIN | `PALADIN_PROTECTION` | `PALADIN_HOLY` | `PALADIN_RETRIBUTION` | — |
+| PRIEST | — | `PRIEST_DISCIPLINE`, `PRIEST_HOLY` | — | `PRIEST_SHADOW` |
+| ROGUE | — | — | `ROGUE_ASSASSINATION`, `ROGUE_OUTLAW`, `ROGUE_SUBTLETY` | — |
+| SHAMAN | — | `SHAMAN_RESTORATION` | `SHAMAN_ENHANCEMENT` | `SHAMAN_ELEMENTAL` |
+| WARLOCK | — | — | — | `WARLOCK_AFFLICTION`, `WARLOCK_DEMONOLOGY`, `WARLOCK_DESTRUCTION` |
+| WARRIOR | `WARRIOR_PROTECTION` | — | `WARRIOR_ARMS`, `WARRIOR_FURY` | — |
+
 ## WU2 — Character aggregate
 
 Class (not a record) in `domain.character`. State: `CharacterId id`,
@@ -80,7 +99,8 @@ Class (not a record) in `domain.character`. State: `CharacterId id`,
   use case (later step) must define how unranked listings sort.
 - `equals`/`hashCode` by `id` only.
 - Queries: `ratingFor(Bracket)` → `Optional<Rating>`, `plays(Specialization)` →
-  `boolean`.
+  `boolean`, `roles()` → derived `Set<Role>` from `specs` — computed on demand,
+  never stored.
 
 ## WU3 — Player
 
@@ -117,6 +137,8 @@ status`, `Instant createdAt`, `Instant expiresAt`.
 - `isActive()` query. `equals`/`hashCode` by `id` only.
 - Reminder: "spec must be one of the character's specs" is NOT validated here —
   cross-aggregate, use case territory.
+- The listing's role is derived (`spec().role()`), never a stored field —
+  stored derivations drift.
 
 ## WU6 — Synergy
 
