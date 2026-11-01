@@ -226,6 +226,30 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   `CurrentPlayerProvider` reading `X-Player-Id`, JPA `Characters`) is the
   adapters step, not this one.
 
+## WU8 — The inbound edge (REST)
+
+| Piece | Package | Content |
+|---|---|---|
+| Controller | `adapters.in.rest` | `POST /api/characters` → 201 + `Location` + `{id}` |
+| Request DTO | `adapters.in.rest` | `RegisterCharacterRequest.toCommand()` — the adapter cost of option C: declared strings become VOs HERE, invalid ones die HERE (422), the use case never sees them. Bracket keys are friendly (`2v2`, `3v3`); everything else uses enum names, case-insensitive |
+| Advice | `adapters.in.rest` | `ApiErrorHandling` — the error strategy as code: DomainRuleViolation → 422 ProblemDetail + DEBUG log; Unauthorized → 401; malformed body → 400; unexpected → 500 + generic detail + the first ERROR log of the codebase. Spring's own framework errors pass through with their own status |
+| Dev auth | `adapters.out.security` | `DevCurrentPlayerProvider` reads `X-Player-Id` via the request context; missing/garbage/no-context → `UnauthorizedException` |
+| Season config | `adapters.out.season` | `ConfigSeasons` — `pvp.current-season` property, bootstrap-only |
+| Bootstrap persistence | `adapters.out.persistence` | `InMemoryCharacters` — stand-in so the app runs end to end BEFORE the database exists; replaced (never grown) by the JPA adapter |
+| Wiring | `adapters` | `WiringConfig` — the composition root: the ONLY place a framework-free application service becomes a bean. It speaks PORTS, never adapter classes |
+
+- The web slice is tested with `@WebMvcTest` plus a nested `@Configuration`
+  that hand-wires the REAL service on hand-rolled fakes and `Clock.fixed` —
+  no Mockito, no database, no full context. The whole inbound path is
+  proven: JSON → command → use case → 201/422.
+- Boot 4 note: `@WebMvcTest` lives in
+  `org.springframework.boot.webmvc.test.autoconfigure` (the split moved it).
+- Running the whole app today needs `docker compose up -d` first, because
+  JPA autoconfiguration still connects at startup even with zero entities —
+  that connection is not used by the in-memory adapter, but Boot insists.
+  The smoke run of the booted app is still pending: Docker Desktop was down
+  when WU8 landed.
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
@@ -277,8 +301,11 @@ own steps: JPA mapping and Flyway (persistence step), the Blizzard API client
 
 ## Next step
 
-WU7 (RegisterCharacter: ports, command, service, behavior tests) is done.
-Next: the adapters step — REST controller + advice (ProblemDetail per the
-error strategy), config-backed `Seasons`, dev `CurrentPlayerProvider` reading
-`X-Player-Id`, and the JPA `Characters` adapter with Flyway and the unique
-index on (region, realm, name) that makes the pre-check's promise real.
+WU8 (inbound REST edge, advice, dev adapters, wiring) is done. Next: WU9 —
+the persistence edge: a JPA `Characters` adapter mapped from the aggregate
+(domain objects never leak into persistence as-is, per the package law),
+Flyway V1 with the unique index on (region, realm, name) that makes the
+pre-check's promise real, `ddl-auto: validate`, and the fork to decide with
+the user: how to map `standings`/`specs` to columns, and Testcontainers vs
+embedded database for the adapter tests (CI needs a postgres service either
+way).

@@ -9,3 +9,9 @@ spring:
     hibernate:
       # TODO(persistence-step): replace with Flyway-managed schema.
       ddl-auto: update
+
+pvp:
+  # Bootstrap: self-reported ratings are stamped with this season id.
+  # TODO(verify): set the real current season id — the Blizzard sync will
+  # own this fact when it arrives.
+  current-season: 42
