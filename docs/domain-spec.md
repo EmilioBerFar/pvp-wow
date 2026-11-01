@@ -134,6 +134,15 @@ cannot produce it), and path segments need percent-encoding (`Ñandú` produced 
 broken URL). Still derived, still never stored — just derived where the inputs
 are trustworthy.
 
+**URL shape — copied from a live character (2026-11-01), not inferred:**
+`https://worldofwarcraft.blizzard.com/{locale}/{game-version}/{region}/armory/character/{realm-slug}/{name}`,
+e.g. `.../es-es/worldsoul/eu/armory/character/dun-modr/strongem`. The
+game-version segment is per-expansion (`worldsoul` for The War Within,
+`classic` for Classic), so it is an adapter constant pinned by a test against
+the real URL — never a domain concept. Name and slug are lowercase in live
+URLs even though in-game names are capitalized. The first version of this
+class built `/{locale}/character/{slug}/{name}` and would have linked nowhere.
+
 ## WU3 — Player
 
 | Class | Kind | Rules |
