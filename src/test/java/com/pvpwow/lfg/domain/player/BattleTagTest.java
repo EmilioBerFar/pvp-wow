@@ -66,6 +66,14 @@ class BattleTagTest {
     }
 
     @Test
+    void acceptsDigitsInTheNamePart() {
+        // Verified against a real battle tag: the name part may contain
+        // digits. The regex already allowed them; this pins it so a future
+        // tightening fails here instead of rejecting real players silently.
+        assertThat(new BattleTag("str0ng3m#21987").value()).isEqualTo("str0ng3m#21987");
+    }
+
+    @Test
     void rejectsNull() {
         assertThatThrownBy(() -> new BattleTag(null))
                 .isInstanceOf(NullPointerException.class);
