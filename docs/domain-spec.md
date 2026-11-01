@@ -235,7 +235,7 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
 | Advice | `adapters.in.rest` | `ApiErrorHandling` — the error strategy as code: DomainRuleViolation → 422 ProblemDetail + DEBUG log; Unauthorized → 401; malformed body → 400; unexpected → 500 + generic detail + the first ERROR log of the codebase. Spring's own framework errors pass through with their own status |
 | Dev auth | `adapters.out.security` | `DevCurrentPlayerProvider` reads `X-Player-Id` via the request context; missing/garbage/no-context → `UnauthorizedException` |
 | Season config | `adapters.out.season` | `ConfigSeasons` — `pvp.current-season` property, bootstrap-only |
-| Bootstrap persistence | `adapters.out.persistence` | `InMemoryCharacters` — stand-in so the app runs end to end BEFORE the database exists; replaced (never grown) by the JPA adapter |
+| Bootstrap persistence | `adapters.out.persistence` | `InMemoryCharacters` — stand-in so the app runs end to end BEFORE the database exists; **replaced by `JpaCharacters` in WU9** |
 | Wiring | `adapters` | `WiringConfig` — the composition root: the ONLY place a framework-free application service becomes a bean. It speaks PORTS, never adapter classes |
 
 - The web slice is tested with `@WebMvcTest` plus a nested `@Configuration`
@@ -249,6 +249,49 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   that connection is not used by the in-memory adapter, but Boot insists.
   The smoke run of the booted app is still pending: Docker Desktop was down
   when WU8 landed.
+
+## WU9 — The persistence edge (JPA + Flyway)
+
+| Piece | Package | Content |
+|---|---|---|
+| Migration | `db/migration` | `V1__create_characters.sql` — `characters` root, `character_specs`, `character_standings`, the unique index on `(region, realm, lower(name))`, and an index on `(bracket, rating desc)` for the board |
+| Entity | `adapters.out.persistence` | `CharacterEntity` — relational shape, mutable, package-private. Domain objects never leak here as-is |
+| Embeddable | `adapters.out.persistence` | `StandingEmbeddable` — rating + season + observedAt; the bracket is the map key |
+| Mapper | `adapters.out.persistence` | `CharacterEntityMapper` — both directions total; `toDomain` always uses `rehydrate` (repositories never invent ids) |
+| Adapter | `adapters.out.persistence` | `JpaCharacters` — `EntityManager` + `TransactionTemplate`, no `@Transactional` (the class is `final`) |
+| Repository | `adapters.out.persistence` | `CharacterJpaRepository` — only the pre-check query; the save path is hand-written |
+
+- **Relational children, not `jsonb` (user decision).** `SearchBoard` is the
+  next unit and it filters by spec and sorts by rating inside a bracket; that
+  is a join and an index, not JSON gymnastics. The cost is three tables.
+- **`save` is explicit on purpose.** The domain assigns the id, so Spring
+  Data's "is it new?" heuristic answers NO and routes every call to `merge`,
+  which on a missing row issued only the SELECT and never inserted. The
+  adapter asks the database and chooses `persist` or `merge`. Identity
+  belongs to us, not to a framework heuristic.
+- **The unique index is the law, and it is casing-blind.** `CharacterName`
+  keeps display case (`Frostbolt`), so the index is functional on
+  `lower(name)`; otherwise registering the same toon twice by recasing it
+  would slip through. `alreadyRegistered` mirrors the index expression.
+- **`owner_id` has no FK yet, deliberately.** There is no `players` table and
+  no `RegisterPlayer` use case, and the dev stub accepts any UUID; a FK today
+  would reject every insert. It arrives with the players table.
+- **Tests against real Postgres.** `JpaCharactersIT` uses Testcontainers
+  (`postgres:18-alpine`) and runs in failsafe (`mvnw verify`), so `mvnw test`
+  stays fast and Docker-free. H2 in PostgreSQL mode would pass and lie: the
+  subject under test is exactly the constraint H2 imitates.
+- **Boot 4 traps paid for here:** (1) `flyway-core` alone does NOT
+  auto-configure — the starter is `spring-boot-starter-flyway`, otherwise
+  `ddl-auto: validate` reports every table as missing; (2) Testcontainers
+  2.x renamed artifacts AND packages: `org.testcontainers:testcontainers-postgresql`,
+  class `org.testcontainers.postgresql.PostgreSQLContainer`, and it is no
+  longer generic.
+- **`postgres:18` changed the volume layout:** mounting at
+  `/var/lib/postgresql/data` makes the container exit; 18+ wants a single
+  mount at `/var/lib/postgresql`.
+- `ddl-auto: validate` stays: Flyway owns the schema, Hibernate only checks
+  that the mapping still matches it. Datasource credentials come from
+  `DB_URL`/`DB_USERNAME`/`DB_PASSWORD`, defaulting to the compose values.
 
 ## Error strategy (decided before the application layer)
 
@@ -296,16 +339,14 @@ wrong.
 
 The domain-phase exclusions — ports, repositories, use cases, controllers —
 are no longer excluded: that phase is complete. Still out of scope until their
-own steps: JPA mapping and Flyway (persistence step), the Blizzard API client
-(sync step), real auth beyond the `X-Player-Id` stub, React.
+own steps: the Blizzard API client (sync step), real auth beyond the
+`X-Player-Id` stub, React.
 
 ## Next step
 
-WU8 (inbound REST edge, advice, dev adapters, wiring) is done. Next: WU9 —
-the persistence edge: a JPA `Characters` adapter mapped from the aggregate
-(domain objects never leak into persistence as-is, per the package law),
-Flyway V1 with the unique index on (region, realm, name) that makes the
-pre-check's promise real, `ddl-auto: validate`, and the fork to decide with
-the user: how to map `standings`/`specs` to columns, and Testcontainers vs
-embedded database for the adapter tests (CI needs a postgres service either
-way).
+WU9 (JPA + Flyway persistence edge) is done. Next: the board itself —
+`PublishListing` and `SearchBoard`, the first use cases that READ. That is
+where the real product forks live: how ties in rating are broken, where
+unranked players appear in a ranking, whether item level matters as a filter
+or only as context, and how stale an observed rating may be before the board
+says so.

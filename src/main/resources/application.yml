@@ -2,13 +2,21 @@ spring:
   application:
     name: pvp-wow
   datasource:
-    url: jdbc:postgresql://localhost:5432/pvpwow
-    username: pvpwow
-    password: pvpwow
+    # Credentials come from the environment; the defaults match
+    # docker-compose.yml so a fresh clone runs with zero setup. Nothing
+    # secret is committed.
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/pvpwow}
+    username: ${DB_USERNAME:pvpwow}
+    password: ${DB_PASSWORD:pvpwow}
   jpa:
+    # A REST API has no view: open-in-view keeps a session open during
+    # serialization and hides lazy-loading mistakes. Aggregates come out of
+    # the adapter complete, so nothing needs it.
+    open-in-view: false
     hibernate:
-      # TODO(persistence-step): replace with Flyway-managed schema.
-      ddl-auto: update
+      # Flyway owns the schema. Hibernate only checks that the mapping still
+      # matches what the migrations created — it never alters anything.
+      ddl-auto: validate
 
 pvp:
   # Bootstrap: self-reported ratings are stamped with this season id.
