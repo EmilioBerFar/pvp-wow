@@ -126,7 +126,7 @@ an external source, so they carry their own evidence:
   never stored.
 
 **No `armoryUrl()` in the domain.** It moved to the edge
-(`adapter.armory.ArmoryLinks`) for three verified reasons: the page locale is
+(`adapters.in.rest.ArmoryLinks`) for three verified reasons: the page locale is
 presentation (deriving eu→es-es served Spanish pages to every EU player), the
 realm slug must be the CANONICAL one from the profile API (the same EU realm is
 "Sanguino" or "Bloodhoof" depending on the client locale, so user-entered text

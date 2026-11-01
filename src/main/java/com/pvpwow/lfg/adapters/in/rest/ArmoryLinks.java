@@ -1,4 +1,4 @@
-package com.pvpwow.lfg.adapter.armory;
+package com.pvpwow.lfg.adapters.in.rest;
 
 import com.pvpwow.lfg.domain.character.Region;
 
