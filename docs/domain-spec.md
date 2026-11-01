@@ -36,7 +36,7 @@ Get-ChildItem -Recurse src\main\java\com\pvpwow\lfg\domain -Filter *.java |
 |-------|---------|------|-------|
 | `CharacterId` | `domain.character` | `record(UUID value)` | Non-null |
 | `PlayerId` | `domain.player` | `record(UUID value)` | Non-null (needed by `Character`) |
-| `Realm` | `domain.character` | `record(String value)` | Trim; collapse inner whitespace runs to one space; lowercase. `"Sanguino"` equals `"sanguino"`. Display casing is a render concern, not a domain concern |
+| `Realm` | `domain.character` | `record(String value)` | Trim; collapse inner whitespace runs to one space; lowercase. `"Sanguino"` equals `"sanguino"`. Display casing is a render concern, not a domain concern. **Open debt:** free text in the bootstrap phase. The same EU realm is named differently per client locale ("Sanguino" / "Bloodhoof"), so two players on one realm can fail to match and `name + realm` uniqueness cannot be trusted. Fix when the API arrives: a realm catalog seeded from Blizzard's realm index, and `Realm` keyed by the canonical slug |
 | `Region` | `domain.character` | enum | `EU`, `US`, `KR`, `TW`, `CN` — rated PvP is cross-realm within a region only |
 | `WowClass` | `domain.character` | enum | 13 constants (see below) |
 | `Specialization` | `domain.character` | enum | 39 constants, each carrying its `WowClass` AND its `Role`; static `forClass(WowClass)` returns the `Set` of its specs (see below) |
@@ -89,31 +89,50 @@ Role assignment (the second field of every `Specialization` constant):
 
 Class (not a record) in `domain.character`. State: `CharacterId id`,
 `PlayerId ownerId`, `CharacterName name`, `Realm realm`, `Region region`,
-`WowClass wowClass`, `ItemLevel itemLevel`, `Set<Specialization> specs`,
-`Map<Bracket, Rating> ratings`.
+`WowClass wowClass`, `GearSnapshot gear`, `Set<Specialization> specs`,
+`Map<Bracket, PvpStanding> standings`.
+
+**Declared vs observed** — the seam that makes the Blizzard API step cheap:
+`specs` (which specializations the player is WILLING to play), languages,
+availability and the battle tag are declared and stay manual forever — no API
+can observe a preference. Name, realm, class, gear and rating are observed from
+an external source, so they carry their own evidence:
+
+- `GearSnapshot(ItemLevel itemLevel, Instant observedAt)` — an item level
+  without a date cannot exist; two separate fields would drift.
+- `PvpStanding(Rating rating, PvpSeason season, Instant observedAt)` — a rating
+  without a season is meaningless (ratings reset every season) and Blizzard's
+  own API returns `season.id` alongside `rating`. Blizzard's profile docs
+  require clients to store the request timestamp and revalidate every 30 days:
+  freshness is not solved by the API, it is made mandatory.
 
 - Two doors, never more: `register(ownerId, name, realm, region, wowClass,
-  itemLevel, specs, ratings)` creates — identity generated inside;
+  gear, specs, standings)` creates — identity generated inside;
   `rehydrate(id, ...)` reconstitutes from persisted state — identity received
   because it already exists. No setters either way.
 - Factory rules: `specs` non-empty AND every spec belongs to `wowClass`
   (hint: `Specialization.forClass(wowClass).containsAll(specs)`); defensive
-  immutable copies of `specs` and `ratings`.
-- `ratings` may be empty or partial — a rating per bracket is optional; an
-  unranked bracket simply has no entry (`ratingFor` returns empty). The search
-  use case (later step) must define how unranked listings sort and how
-  item-level proximity filters — gear gaps matter in rated PvP.
+  immutable copies of `specs` and `standings`.
+- `standings` may be empty or partial — a rating per bracket is optional; an
+  unranked bracket simply has no entry (`standingFor` returns empty). The search
+  use case (later step) must define how unranked listings sort, how stale a
+  standing may be before it is shown as unknown, and how item-level proximity
+  filters — gear gaps matter in rated PvP.
 - `equals`/`hashCode` by `id` only.
-- Queries: `ratingFor(Bracket)` → `Optional<Rating>`, `plays(Specialization)` →
+- Queries: `standingFor(Bracket)` → `Optional<PvpStanding>`, `ratingFor(Bracket)`
+  → `Optional<Rating>` (convenience, delegates), `gear()` → `GearSnapshot`,
+  `itemLevel()` → `ItemLevel` (convenience), `plays(Specialization)` →
   `boolean`, `roles()` → derived `Set<Role>` from `specs` — computed on demand,
   never stored.
-- `armoryUrl()` → derived `String`:
-  `https://worldofwarcraft.blizzard.com/{locale}/character/{realm-slug}/{name}`
-  where locale maps from region (EU→es-es, US→en-us, KR→ko-kr, TW→zh-tw,
-  CN→zh-cn) and realm-slug is the normalized realm with spaces as hyphens and
-  apostrophes dropped ("Los Errantes"→`los-errantes`). Never stored, never
-  user-entered. Before closing WU2, verify the format against YOUR OWN real
-  character in the browser — you play WoW, you hold the ground truth.
+
+**No `armoryUrl()` in the domain.** It moved to the edge
+(`adapter.armory.ArmoryLinks`) for three verified reasons: the page locale is
+presentation (deriving eu→es-es served Spanish pages to every EU player), the
+realm slug must be the CANONICAL one from the profile API (the same EU realm is
+"Sanguino" or "Bloodhoof" depending on the client locale, so user-entered text
+cannot produce it), and path segments need percent-encoding (`Ñandú` produced a
+broken URL). Still derived, still never stored — just derived where the inputs
+are trustworthy.
 
 ## WU3 — Player
 

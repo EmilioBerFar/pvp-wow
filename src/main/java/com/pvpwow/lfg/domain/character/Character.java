@@ -32,24 +32,24 @@ public class Character {
     private final Realm realm;
     private final Region region;
     private final WowClass wowClass;
-    private final ItemLevel itemLevel;
+    private final GearSnapshot gear;
     private final Set<Specialization> specs;
-    private final Map<Bracket, Rating> ratings;
+    private final Map<Bracket, PvpStanding> standings;
 
     private Character(CharacterId id, PlayerId ownerId, CharacterName name, Realm realm,
-                      Region region, WowClass wowClass, ItemLevel itemLevel,
-                      Set<Specialization> specs, Map<Bracket, Rating> ratings) {
+                      Region region, WowClass wowClass, GearSnapshot gear,
+                      Set<Specialization> specs, Map<Bracket, PvpStanding> standings) {
         this.id = Objects.requireNonNull(id, "id must not be null");
         this.ownerId = Objects.requireNonNull(ownerId, "ownerId must not be null");
         this.name = Objects.requireNonNull(name, "name must not be null");
         this.realm = Objects.requireNonNull(realm, "realm must not be null");
         this.region = Objects.requireNonNull(region, "region must not be null");
         this.wowClass = Objects.requireNonNull(wowClass, "wowClass must not be null");
-        this.itemLevel = Objects.requireNonNull(itemLevel, "itemLevel must not be null");
+        this.gear = Objects.requireNonNull(gear, "gear must not be null");
         Objects.requireNonNull(specs, "specs must not be null");
-        Objects.requireNonNull(ratings, "ratings must not be null");
+        Objects.requireNonNull(standings, "standings must not be null");
         this.specs = Set.copyOf(specs);
-        this.ratings = Map.copyOf(ratings);
+        this.standings = Map.copyOf(standings);
         ensureSpecsBelongToTheClass();
     }
 
@@ -58,10 +58,11 @@ public class Character {
      * invent ids.
      */
     public static Character register(PlayerId ownerId, CharacterName name, Realm realm,
-                                     Region region, WowClass wowClass, ItemLevel itemLevel,
-                                     Set<Specialization> specs, Map<Bracket, Rating> ratings) {
+                                     Region region, WowClass wowClass, GearSnapshot gear,
+                                     Set<Specialization> specs,
+                                     Map<Bracket, PvpStanding> standings) {
         return new Character(new CharacterId(UUID.randomUUID()), ownerId, name, realm, region,
-                wowClass, itemLevel, specs, ratings);
+                wowClass, gear, specs, standings);
     }
 
     /**
@@ -70,9 +71,9 @@ public class Character {
      */
     public static Character rehydrate(CharacterId id, PlayerId ownerId, CharacterName name,
                                       Realm realm, Region region, WowClass wowClass,
-                                      ItemLevel itemLevel, Set<Specialization> specs,
-                                      Map<Bracket, Rating> ratings) {
-        return new Character(id, ownerId, name, realm, region, wowClass, itemLevel, specs, ratings);
+                                      GearSnapshot gear, Set<Specialization> specs,
+                                      Map<Bracket, PvpStanding> standings) {
+        return new Character(id, ownerId, name, realm, region, wowClass, gear, specs, standings);
     }
 
     private void ensureSpecsBelongToTheClass() {
@@ -116,20 +117,40 @@ public class Character {
         return wowClass;
     }
 
+    /**
+     * Convenience for the common read: the item level, without its date. Callers
+     * that must show "as of" use {@link #gear()}.
+     */
     public ItemLevel itemLevel() {
-        return itemLevel;
+        return gear.itemLevel();
+    }
+
+    public GearSnapshot gear() {
+        return gear;
     }
 
     public Set<Specialization> specs() {
         return specs;
     }
 
-    public Map<Bracket, Rating> ratings() {
-        return ratings;
+    public Map<Bracket, PvpStanding> standings() {
+        return standings;
     }
 
+    /**
+     * The full observed fact for a bracket: rating, season and when it was seen.
+     */
+    public Optional<PvpStanding> standingFor(Bracket bracket) {
+        return Optional.ofNullable(standings.get(bracket));
+    }
+
+    /**
+     * The rating alone. {@code Optional} because an unranked bracket is a normal
+     * state, not an error. Use {@link #standingFor} when the season or the
+     * freshness matters — which, for a board that ages, is almost always.
+     */
     public Optional<Rating> ratingFor(Bracket bracket) {
-        return Optional.ofNullable(ratings.get(bracket));
+        return standingFor(bracket).map(PvpStanding::rating);
     }
 
     public boolean plays(Specialization spec) {
@@ -138,27 +159,6 @@ public class Character {
 
     public Set<Role> roles() {
         return specs.stream().map(Specialization::role).collect(toUnmodifiableSet());
-    }
-
-    /**
-     * Armory profile URL — fully derived from region + realm + name. Never
-     * stored, never user-entered.
-     *
-     * <p>Known v1 limitation: Latin-script realms only. Cyrillic EU realms
-     * (e.g. Гордунни) use transliterated slugs on the armory and would need
-     * a transliteration step.
-     */
-    public String armoryUrl() {
-        String locale = switch (region) {
-            case EU -> "es-es";
-            case US -> "en-us";
-            case KR -> "ko-kr";
-            case TW -> "zh-tw";
-            case CN -> "zh-cn";
-        };
-        String realmSlug = realm.value().replace(" ", "-").replace("'", "");
-        return "https://worldofwarcraft.blizzard.com/%s/character/%s/%s"
-                .formatted(locale, realmSlug, name.value());
     }
 
     // ---- identity equality: the id IS the character ----
