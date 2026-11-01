@@ -43,6 +43,7 @@ Get-ChildItem -Recurse src\main\java\com\pvpwow\lfg\domain -Filter *.java |
 | `Role` | `domain.character` | enum | `TANK`, `HEALER`, `MELEE_DPS`, `RANGED_DPS` — the melee/ranged split is the first question when building an arena comp; the classic 3-way split is too coarse. Roles belong to specs, never to classes |
 | `Rating` | `domain.character` | `record(int value)` | `0..3500` inclusive. Named `Rating` (visible CR), not `Mmr`: what players report by hand is their CR; MMR is Blizzard's hidden matchmaking value |
 | `ItemLevel` | `domain.character` | `record(int value)` | `1..1000` inclusive. Deliberately loose — ilvl caps change every season and expansion, and tight validation rots. Required on every character: gear determines arena readiness |
+| `Bracket` | `domain.character` | enum | `TWO_VS_TWO` (teamSize 2), `THREE_VS_THREE` (teamSize 3). Character package, not listing: ratings-per-bracket need it here and package dependencies flow listing → character, never the reverse |
 
 `WowClass` constants: `DEATH_KNIGHT, DEMON_HUNTER, DRUID, EVOKER, HUNTER, MAGE,
 MONK, PALADIN, PRIEST, ROGUE, SHAMAN, WARLOCK, WARRIOR`.
@@ -91,8 +92,10 @@ Class (not a record) in `domain.character`. State: `CharacterId id`,
 `WowClass wowClass`, `ItemLevel itemLevel`, `Set<Specialization> specs`,
 `Map<Bracket, Rating> ratings`.
 
-- Static factory `register(ownerId, name, realm, region, wowClass, itemLevel,
-  specs, ratings)` — the only way to create one.
+- Two doors, never more: `register(ownerId, name, realm, region, wowClass,
+  itemLevel, specs, ratings)` creates — identity generated inside;
+  `rehydrate(id, ...)` reconstitutes from persisted state — identity received
+  because it already exists. No setters either way.
 - Factory rules: `specs` non-empty AND every spec belongs to `wowClass`
   (hint: `Specialization.forClass(wowClass).containsAll(specs)`); defensive
   immutable copies of `specs` and `ratings`.
@@ -124,7 +127,6 @@ Class (not a record) in `domain.character`. State: `CharacterId id`,
 
 | Class | Kind | Rules |
 |-------|------|-------|
-| `Bracket` | `domain.listing`, enum | `TWO_VS_TWO` (teamSize 2), `THREE_VS_THREE` (teamSize 3) |
 | `Language` | `domain.listing`, enum | `ES, EN, PT, FR, DE, IT` each carrying its ISO 639-1 code. EU-centric set; extendable |
 | `TimeWindow` | `domain.listing`, `record(DayOfWeek day, LocalTime start, LocalTime end)` | `start` strictly before `end`; no midnight wrap in v1; half-open `[start, end)` |
 | `AvailabilitySchedule` | `domain.listing`, `record(Set<TimeWindow> windows, ZoneId zone)` | At least one window; no duplicate windows; immutable copy. Without the zone, "evenings" means nothing between Madrid and Mexico City |

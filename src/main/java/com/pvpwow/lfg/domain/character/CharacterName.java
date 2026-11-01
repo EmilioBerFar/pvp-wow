@@ -13,6 +13,9 @@ import java.util.Objects;
  * <p>This is the reference standard for every other value object in this
  * domain: a Java record whose compact constructor validates its own rules,
  * so an invalid value simply cannot exist.
+ *
+ * <p>Note: {@code java.lang.Character} must be fully qualified here — the
+ * aggregate {@code Character} lives in this very package and shadows it.
  */
 public record CharacterName(String value) {
 
@@ -24,7 +27,7 @@ public record CharacterName(String value) {
         String candidate = value.trim();
         if (candidate.length() < MIN_LENGTH
                 || candidate.length() > MAX_LENGTH
-                || !candidate.chars().allMatch(Character::isLetter)) {
+                || !candidate.chars().allMatch(java.lang.Character::isLetter)) {
             throw new DomainRuleViolationException(
                     "Character name must be 2-12 letters, got: '%s'".formatted(candidate));
         }
