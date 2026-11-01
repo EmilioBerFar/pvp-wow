@@ -42,6 +42,7 @@ Get-ChildItem -Recurse src\main\java\com\pvpwow\lfg\domain -Filter *.java |
 | `Specialization` | `domain.character` | enum | 39 constants, each carrying its `WowClass` AND its `Role`; static `forClass(WowClass)` returns the `Set` of its specs (see below) |
 | `Role` | `domain.character` | enum | `TANK`, `HEALER`, `MELEE_DPS`, `RANGED_DPS` — the melee/ranged split is the first question when building an arena comp; the classic 3-way split is too coarse. Roles belong to specs, never to classes |
 | `Rating` | `domain.character` | `record(int value)` | `0..3500` inclusive. Named `Rating` (visible CR), not `Mmr`: what players report by hand is their CR; MMR is Blizzard's hidden matchmaking value |
+| `ItemLevel` | `domain.character` | `record(int value)` | `1..1000` inclusive. Deliberately loose — ilvl caps change every season and expansion, and tight validation rots. Required on every character: gear determines arena readiness |
 
 `WowClass` constants: `DEATH_KNIGHT, DEMON_HUNTER, DRUID, EVOKER, HUNTER, MAGE,
 MONK, PALADIN, PRIEST, ROGUE, SHAMAN, WARLOCK, WARRIOR`.
@@ -87,20 +88,29 @@ Role assignment (the second field of every `Specialization` constant):
 
 Class (not a record) in `domain.character`. State: `CharacterId id`,
 `PlayerId ownerId`, `CharacterName name`, `Realm realm`, `Region region`,
-`WowClass wowClass`, `Set<Specialization> specs`, `Map<Bracket, Rating> ratings`.
+`WowClass wowClass`, `ItemLevel itemLevel`, `Set<Specialization> specs`,
+`Map<Bracket, Rating> ratings`.
 
-- Static factory `register(ownerId, name, realm, region, wowClass, specs, ratings)`
-  — the only way to create one.
+- Static factory `register(ownerId, name, realm, region, wowClass, itemLevel,
+  specs, ratings)` — the only way to create one.
 - Factory rules: `specs` non-empty AND every spec belongs to `wowClass`
   (hint: `Specialization.forClass(wowClass).containsAll(specs)`); defensive
   immutable copies of `specs` and `ratings`.
 - `ratings` may be empty or partial — a rating per bracket is optional; an
   unranked bracket simply has no entry (`ratingFor` returns empty). The search
-  use case (later step) must define how unranked listings sort.
+  use case (later step) must define how unranked listings sort and how
+  item-level proximity filters — gear gaps matter in rated PvP.
 - `equals`/`hashCode` by `id` only.
 - Queries: `ratingFor(Bracket)` → `Optional<Rating>`, `plays(Specialization)` →
   `boolean`, `roles()` → derived `Set<Role>` from `specs` — computed on demand,
   never stored.
+- `armoryUrl()` → derived `String`:
+  `https://worldofwarcraft.blizzard.com/{locale}/character/{realm-slug}/{name}`
+  where locale maps from region (EU→es-es, US→en-us, KR→ko-kr, TW→zh-tw,
+  CN→zh-cn) and realm-slug is the normalized realm with spaces as hyphens and
+  apostrophes dropped ("Los Errantes"→`los-errantes`). Never stored, never
+  user-entered. Before closing WU2, verify the format against YOUR OWN real
+  character in the browser — you play WoW, you hold the ground truth.
 
 ## WU3 — Player
 
