@@ -189,6 +189,33 @@ status`, `Instant createdAt`, `Instant expiresAt`.
 
 The JSON file and the catalog port are NOT yours — that is the adapter step.
 
+## Error strategy (decided before the application layer)
+
+Errors have three audiences, and each is served at a different layer:
+
+| Audience | Needs | Served by |
+|---|---|---|
+| The caller | a clear message to correct and retry | the exception message → `422 ProblemDetail` (RFC 9457) from the REST advice in `adapters.in.rest` |
+| The operator | logs of anomalies | the catching edge — never the domain |
+| The developer | the stack trace of the unexpected | `500` + ERROR with correlation id |
+
+- The domain THROWS, it never logs: it cannot know whether a violation is
+  expected or anomalous (the caller's context decides), and logging is an
+  infrastructure side effect. Enforced by ArchUnit — `org.slf4j..` is already
+  forbidden in `..domain..`.
+- Two failure families, already built: `Objects.requireNonNull` (NPE) means a
+  bug in the calling code → 500; `DomainRuleViolationException` means invalid
+  data → 4xx. Today: 19 throw sites, every message carrying the offending
+  value ("got: 0", "ROGUE_ASSASSINATION ... MAGE").
+- A failed validation is NOT log-worthy — it is normal business. Logging every
+  400 at ERROR turns bot traffic into noise that buries real signals.
+  Validation failures become a METRIC (count per violated rule: which field
+  frustrates players the most), not a log line.
+- Once `adapters.in.rest` exists: `DomainRuleViolationException` → 422
+  ProblemDetail at DEBUG; unexpected → 500 + ERROR with correlation id (MDC);
+  use-case events (character registered, listing published, later sync
+  results) → INFO, structured; JSON logs in production, console in dev.
+
 ## Testing standard
 
 Mirror `CharacterNameTest`: happy path, every boundary (min, max), one test per
@@ -206,9 +233,21 @@ wrong.
 
 ## Out of scope (do not build)
 
-Ports, repositories, use cases, controllers, the synergy JSON, Flyway, auth,
-Blizzard API, React.
+The domain-phase exclusions — ports, repositories, use cases, controllers —
+are no longer excluded: that phase is complete. Still out of scope until their
+own steps: JPA mapping and Flyway (persistence step), the Blizzard API client
+(sync step), real auth beyond the `X-Player-Id` stub, React.
 
 ## Next step
 
-Start WU1. When `./mvnw test` is green, ping me for review.
+The domain phase is complete (WU1–WU6, architecture rules, CI). Next: the
+application layer, starting with WU7 — `RegisterCharacter`. Three forks to
+decide before typing:
+
+1. Command shape: value objects in the command (the adapter builds them, the
+   domain validates by construction) vs primitives in the command (the use
+   case owns validation).
+2. `name + realm` uniqueness: friendly pre-check through the repository port
+   plus a DB unique index as the race-proof last line — or DB index only.
+3. What registration captures: bare identity, or full self-report (gear
+   snapshot and standings stamped at registration time).
