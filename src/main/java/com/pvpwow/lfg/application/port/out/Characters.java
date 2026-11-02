@@ -1,9 +1,12 @@
 package com.pvpwow.lfg.application.port.out;
 
 import com.pvpwow.lfg.domain.character.Character;
+import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.character.CharacterName;
 import com.pvpwow.lfg.domain.character.Realm;
 import com.pvpwow.lfg.domain.character.Region;
+
+import java.util.Optional;
 
 /**
  * Driven port: character persistence. The interface speaks domain types
@@ -12,6 +15,8 @@ import com.pvpwow.lfg.domain.character.Region;
 public interface Characters {
 
     void save(Character character);
+
+    Optional<Character> findById(CharacterId id);
 
     /**
      * Friendly duplicate pre-check for (region, realm, name) — a character's

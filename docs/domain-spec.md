@@ -293,13 +293,59 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   that the mapping still matches it. Datasource credentials come from
   `DB_URL`/`DB_USERNAME`/`DB_PASSWORD`, defaulting to the compose values.
 
+## WU10 — Publish and search the board (application layer)
+
+| Piece | Package | Content |
+|---|---|---|
+| Publish driving port | `application.port.in` | `PublishListing` + command: character, bracket, pinned spec, languages and schedule. No client TTL |
+| Publish service | `application.service` | `PublishListingService` — resolves the caller, loads the character, enforces ownership/spec membership/active uniqueness, stamps time and saves |
+| Listing write port | `application.port.out` | `Listings` — save plus the advisory active-duplicate query. `Characters.findById` added for the cross-aggregate checks |
+| Search driving port | `application.port.in` | `SearchBoard` — mandatory region/bracket; optional class, minimum CR and minimum item level; returns domain-backed `BoardEntry` rows |
+| Board read port | `application.port.out` | `BoardListings` — the query contract PostgreSQL must execute; separate from the listing write port |
+| Search service | `application.service` | `SearchBoardService` — supplies now/current season, delegates filtering and recency order, marks stale ratings without mutating them |
+
+- **One ACTIVE listing per character and bracket (user decision).** 2v2 and
+  3v3 are independent. Publishing a duplicate is a domain violation (422 at
+  the REST edge); expiry or cancellation frees the slot. The future database
+  constraint, not the pre-check, must win concurrent races.
+- **Missing and foreign characters are indistinguishable (user decision,
+  OWASP anti-enumeration).** An unknown character id and a character owned by
+  another player both return 404 with the same body — "Character not found" —
+  and no name, realm or region. The caller must not learn whether a character
+  exists. The spec the character did not declare and the active duplicate stay
+  422: they are invalid business requests, not missing resources.
+- **Starting to play closes all the user's listings (user decision).** Closing
+  one of your own listings to play and accepting another player's invitation
+  both trigger the same bulk close for that user. This belongs to future
+  `CompleteGroup`/`AcceptInvitation` use cases, not to `PublishListing` or an
+  isolated `cancel()`. Listings are closed, not deleted.
+- **Server-owned 24-hour TTL (user decision).** The service receives a
+  `Duration`; adapter configuration will supply `PT24H`. No inbound command
+  can extend its own visibility.
+- **Recency, not synergy, controls visibility (user decision).** Results are
+  ordered `createdAt DESC`, so meta classes do not permanently occupy the top.
+  Optional filters: `WowClass`, minimum visible CR (`Rating`, never hidden
+  MMR), and minimum item level.
+- **Old evidence stays visible but cannot satisfy a CR filter (user
+  decision).** A rating from another season or observed more than 30 days ago
+  is marked `ratingStale`; its value and `observedAt` remain visible. With no
+  minimum-CR filter the candidate stays on the board. At exactly 30 days the
+  observation is still fresh. Unranked is not stale.
+- **Read policy is split from query execution.** `SearchBoardService` owns
+  time, season and freshness; `BoardListings` owns active/unexpired filtering,
+  optional predicates and recency ordering. The future SQL adapter must prove
+  those behaviors against real Postgres. Loading everything and filtering in
+  Java would waste the WU9 relational design.
+- WU10 is application-layer only: no listing tables, REST endpoints or Spring
+  wiring yet. Pagination must be bounded before the board is exposed publicly.
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
 
 | Audience | Needs | Served by |
 |---|---|---|
-| The caller | a clear message to correct and retry | the exception message → `422 ProblemDetail` (RFC 9457) from the REST advice in `adapters.in.rest` |
+| The caller | a clear message to correct and retry | the exception message → `422` for invalid data or `404` for a missing or inaccessible resource (`ProblemDetail`, RFC 9457, from the REST advice in `adapters.in.rest`) |
 | The operator | logs of anomalies | the catching edge — never the domain |
 | The developer | the stack trace of the unexpected | `500` + ERROR with correlation id |
 
@@ -307,10 +353,13 @@ Errors have three audiences, and each is served at a different layer:
   expected or anomalous (the caller's context decides), and logging is an
   infrastructure side effect. Enforced by ArchUnit — `org.slf4j..` is already
   forbidden in `..domain..`.
-- Two failure families, already built: `Objects.requireNonNull` (NPE) means a
+- The failure families, already built: `Objects.requireNonNull` (NPE) means a
   bug in the calling code → 500; `DomainRuleViolationException` means invalid
-  data → 4xx. Today: 19 throw sites, every message carrying the offending
-  value ("got: 0", "ROGUE_ASSASSINATION ... MAGE").
+  data → 422; `ResourceNotFoundException` means the aggregate is absent OR the
+  caller may not act on it → 404, with one message so existence never leaks.
+  The dev auth adapter adds `UnauthorizedException` → 401. Messages carry the
+  offending value ("got: 0", "ROGUE_ASSASSINATION ... MAGE") except when that
+  would reveal a resource the caller cannot access.
 - A failed validation is NOT log-worthy — it is normal business. Logging every
   400 at ERROR turns bot traffic into noise that buries real signals.
   Validation failures become a METRIC (count per violated rule: which field
@@ -344,9 +393,7 @@ own steps: the Blizzard API client (sync step), real auth beyond the
 
 ## Next step
 
-WU9 (JPA + Flyway persistence edge) is done. Next: the board itself —
-`PublishListing` and `SearchBoard`, the first use cases that READ. That is
-where the real product forks live: how ties in rating are broken, where
-unranked players appear in a ranking, whether item level matters as a filter
-or only as context, and how stale an observed rating may be before the board
-says so.
+WU10 (publish and search use cases) is done.
+Next: WU11 — listing persistence and the real board query in SQL, proven
+against real Postgres: expiry sweep, partial unique index, optional filters
+and deterministic recency order.

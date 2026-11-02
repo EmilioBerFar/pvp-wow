@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -137,6 +138,11 @@ class RegisterCharacterServiceTest {
         public void save(Character character) {
             saved.add(character);
             registered.add(key(character.region(), character.realm(), character.name()));
+        }
+
+        @Override
+        public Optional<Character> findById(CharacterId id) {
+            return saved.stream().filter(character -> character.id().equals(id)).findFirst();
         }
 
         @Override

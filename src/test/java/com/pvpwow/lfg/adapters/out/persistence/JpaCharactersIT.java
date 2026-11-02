@@ -3,6 +3,7 @@ package com.pvpwow.lfg.adapters.out.persistence;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
+import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.character.CharacterName;
 import com.pvpwow.lfg.domain.character.GearSnapshot;
 import com.pvpwow.lfg.domain.character.ItemLevel;
@@ -93,8 +94,7 @@ class JpaCharactersIT {
     void rehydratesTheAggregateWithEveryFieldIntact() {
         Character saved = saved("Frostbolt");
 
-        Character rehydrated = CharacterEntityMapper.toDomain(
-                repository.findById(saved.id().value()).orElseThrow());
+        Character rehydrated = characters.findById(saved.id()).orElseThrow();
 
         assertThat(rehydrated.id()).isEqualTo(saved.id());
         assertThat(rehydrated.ownerId()).isEqualTo(PLAYER);
@@ -105,6 +105,11 @@ class JpaCharactersIT {
                 Specialization.MAGE_FROST, Specialization.MAGE_ARCANE);
         assertThat(rehydrated.ratingFor(Bracket.THREE_VS_THREE))
                 .contains(new Rating(2100));
+    }
+
+    @Test
+    void findingAnUnknownIdReturnsEmpty() {
+        assertThat(characters.findById(new CharacterId(UUID.randomUUID()))).isEmpty();
     }
 
     @Test

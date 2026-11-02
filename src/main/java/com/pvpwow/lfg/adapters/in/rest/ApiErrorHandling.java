@@ -1,6 +1,7 @@
 package com.pvpwow.lfg.adapters.in.rest;
 
 import com.pvpwow.lfg.adapters.out.security.UnauthorizedException;
+import com.pvpwow.lfg.application.error.ResourceNotFoundException;
 import com.pvpwow.lfg.domain.shared.DomainRuleViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  *   <li>Domain rule violations are NORMAL BUSINESS: the caller gets the
  *       message as 422 ProblemDetail, logged at DEBUG — never ERROR, or bot
  *       traffic buries real signals.</li>
+ *   <li>A missing resource and a resource the caller may not touch are both
+ *       404 with the same detail, so the edge never reveals existence.</li>
  *   <li>Unauthorized (dev stub): 401.</li>
  *   <li>Malformed body: 400.</li>
  *   <li>Everything else is an anomaly: 500, generic detail (no internals
@@ -39,6 +42,15 @@ final class ApiErrorHandling {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.UNPROCESSABLE_ENTITY, violation.getMessage());
         problem.setTitle("Domain rule violation");
+        return problem;
+    }
+
+    @ExceptionHandler(ResourceNotFoundException.class)
+    ProblemDetail resourceNotFound(ResourceNotFoundException notFound) {
+        log.debug("Missing resource: {}", notFound.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.NOT_FOUND, notFound.getMessage());
+        problem.setTitle("Resource not found");
         return problem;
     }
 

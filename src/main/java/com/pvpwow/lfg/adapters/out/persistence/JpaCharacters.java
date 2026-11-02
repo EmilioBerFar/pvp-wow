@@ -2,6 +2,7 @@ package com.pvpwow.lfg.adapters.out.persistence;
 
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.domain.character.Character;
+import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.character.CharacterName;
 import com.pvpwow.lfg.domain.character.Realm;
 import com.pvpwow.lfg.domain.character.Region;
@@ -9,6 +10,8 @@ import jakarta.persistence.EntityManager;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.Optional;
 
 /**
  * The out port, implemented. It knows three things and refuses to know
@@ -57,6 +60,11 @@ final class JpaCharacters implements Characters {
                 entityManager.merge(candidate);
             }
         });
+    }
+
+    @Override
+    public Optional<Character> findById(CharacterId id) {
+        return repository.findById(id.value()).map(CharacterEntityMapper::toDomain);
     }
 
     @Override

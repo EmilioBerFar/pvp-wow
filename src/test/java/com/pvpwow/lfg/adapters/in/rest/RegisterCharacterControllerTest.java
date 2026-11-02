@@ -7,6 +7,7 @@ import com.pvpwow.lfg.application.port.out.Seasons;
 import com.pvpwow.lfg.application.service.RegisterCharacterService;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
+import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.character.CharacterName;
 import com.pvpwow.lfg.domain.character.ItemLevel;
 import com.pvpwow.lfg.domain.character.PvpSeason;
@@ -31,6 +32,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -214,6 +216,11 @@ class RegisterCharacterControllerTest {
         public void save(Character character) {
             saved.add(character);
             registered.add(key(character.region(), character.realm(), character.name()));
+        }
+
+        @Override
+        public Optional<Character> findById(CharacterId id) {
+            return saved.stream().filter(character -> character.id().equals(id)).findFirst();
         }
 
         @Override
