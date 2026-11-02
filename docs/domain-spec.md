@@ -339,6 +339,57 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
 - WU10 is application-layer only: no listing tables, REST endpoints or Spring
   wiring yet. Pagination must be bounded before the board is exposed publicly.
 
+## WU11 — Listing persistence and the real board query
+
+| Piece | Package | Content |
+|---|---|---|
+| Migration | `db/migration` | `V2__create_listings.sql` — `lfg_listings` root, `listing_languages`, `listing_windows`, partial unique index on `(character_id, bracket)` for ACTIVE rows, and the board index on `(bracket, created_at desc, id desc)` |
+| Entities | `adapters.out.persistence` | `ListingEntity` — listing root with a LAZY character reference; `WindowEmbeddable` — one persisted availability window |
+| Write mapper | `adapters.out.persistence` | `ListingEntityMapper` — total translation; persists ISO language codes and day names, never enum constant names |
+| Write adapter | `adapters.out.persistence` | `JpaListings` — one transaction: expire the character's due ACTIVE rows, then `persist`; a unique-index rejection becomes the business duplicate rule |
+| Repository | `adapters.out.persistence` | `ListingJpaRepository` — the expiry sweep and the advisory active query |
+| Read adapter | `adapters.out.persistence` | `JdbcBoardListings` — explicit SQL, optional predicates, the freshness `EXISTS`, `createdAt DESC, id DESC`, and batched hydration |
+
+- **Expire, then insert (user decision).** PostgreSQL cannot use `now()` in a
+  partial index predicate, so an overdue-but-ACTIVE row would otherwise block
+  the slot forever. `JpaListings.publish` marks the character's due ACTIVE rows
+  EXPIRED using the new listing's `createdAt` as the reference, then inserts in
+  the same transaction.
+- **The partial unique index is still the law.** `ux_lfg_listings_active`
+  arbitrates concurrent publishers that both raced past the application-level
+  pre-check. The adapter reads SQLState 23505 from the cause chain and turns
+  the rejection into `DomainRuleViolationException` only when an active row
+  actually exists; driver classes stay out of the adapter because the driver is
+  runtime scope.
+- **Reads use JdbcTemplate; writes use JPA (user decision).** The board needs
+  optional predicates, a current-season freshness `EXISTS` and deterministic
+  ordering; a JPA fetch graph over four collections would multiply rows and
+  still need deduplication. Writes stay on JPA, where `persist` and the
+  transaction are explicit.
+- **The rating filter is an `EXISTS`, not a join.** A minimum CR matches a
+  standing for the same bracket, current season, at or after
+  `ratingFreshAfter`, with `rating >= minimumRating`. Stale, previous-season
+  and unranked evidence cannot satisfy it, but stays visible when no minimum
+  is requested.
+- **Aggregate hydration is batched.** The listing/character root comes from the
+  filtered query; languages, windows, specs and standings are loaded by id
+  lists. Each query has one job and no cartesian product.
+- **Class and item-level filters are direct predicates** on
+  `characters.wow_class` and `characters.item_level`; the region and bracket
+  predicates are mandatory, as in the port.
+- **Staleness stays application-owned.** `SearchBoardService` computes
+  `ratingFreshAfter` and marks rows; the adapter only executes criteria. The
+  board never mutates observed evidence.
+- **Boundaries.** WU11 adds no REST endpoints, no bean wiring of the use cases
+  and no TTL configuration; those are WU12. Pagination is still absent from the
+  port and must be bounded before the board is public.
+- **Tests against real Postgres.** `JpaListingsIT` covers the round trip, the
+  expiry sweep, the active query boundary and the duplicate index.
+  `JdbcBoardListingsIT` covers region/bracket isolation, overdue and cancelled
+  rows, class/item-level/rating filters, the exactly-30-day boundary,
+  previous-season and unranked evidence, recency order and full aggregate
+  hydration. Both run in failsafe (`mvnw verify`).
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
@@ -393,7 +444,8 @@ own steps: the Blizzard API client (sync step), real auth beyond the
 
 ## Next step
 
-WU10 (publish and search use cases) is done.
-Next: WU11 — listing persistence and the real board query in SQL, proven
-against real Postgres: expiry sweep, partial unique index, optional filters
-and deterministic recency order.
+WU11 (listing persistence and the real board query) is done.
+Next: WU12 — expose `PublishListing` and `SearchBoard` through REST, wire both
+services as beans, supply the configured 24-hour TTL, and bound pagination
+before the board is public. The current season already comes from
+`pvp.current-season`.
