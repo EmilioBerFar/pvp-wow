@@ -23,8 +23,9 @@ public interface BoardListings {
     /**
      * Returns ACTIVE, unexpired rows ordered by {@code createdAt} descending.
      * A minimum rating matches only current-season observations made at or
-     * after {@code ratingFreshAfter}. Candidates with old ratings remain
-     * visible when no minimum was requested.
+     * after {@code evidenceFreshAfter}; a minimum item level matches only gear
+     * observed at or after the same instant. Candidates with old evidence
+     * remain visible when no threshold was requested.
      */
     List<BoardCandidate> search(SearchCriteria criteria);
 
@@ -35,14 +36,14 @@ public interface BoardListings {
             Rating minimumRating,
             ItemLevel minimumItemLevel,
             PvpSeason currentSeason,
-            Instant ratingFreshAfter,
+            Instant evidenceFreshAfter,
             Instant now) {
 
         public SearchCriteria {
             Objects.requireNonNull(region, "region must not be null");
             Objects.requireNonNull(bracket, "bracket must not be null");
             Objects.requireNonNull(currentSeason, "currentSeason must not be null");
-            Objects.requireNonNull(ratingFreshAfter, "ratingFreshAfter must not be null");
+            Objects.requireNonNull(evidenceFreshAfter, "evidenceFreshAfter must not be null");
             Objects.requireNonNull(now, "now must not be null");
         }
     }

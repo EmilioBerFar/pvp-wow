@@ -15,11 +15,15 @@ import java.util.Objects;
 /**
  * SearchBoard, orchestrated. The read adapter executes filters and recency
  * ordering; this service supplies the current time and season and computes
- * the freshness label without mutating the observed domain facts.
+ * the freshness labels without mutating the observed domain facts.
+ *
+ * <p>Ratings and gear age under the same policy: one window, one threshold.
+ * Old evidence still reaches the board, but it is marked stale and it cannot
+ * satisfy its own minimum filter.
  */
 public final class SearchBoardService implements SearchBoard {
 
-    private static final Duration MAX_RATING_AGE = Duration.ofDays(30);
+    private static final Duration MAX_EVIDENCE_AGE = Duration.ofDays(30);
 
     private final BoardListings boardListings;
     private final Seasons seasons;
@@ -34,24 +38,34 @@ public final class SearchBoardService implements SearchBoard {
     @Override
     public List<BoardEntry> search(SearchBoardQuery query) {
         Instant now = clock.instant();
-        Instant ratingFreshAfter = now.minus(MAX_RATING_AGE);
+        Instant evidenceFreshAfter = now.minus(MAX_EVIDENCE_AGE);
         PvpSeason currentSeason = seasons.current();
 
         SearchCriteria criteria = new SearchCriteria(query.region(), query.bracket(),
                 query.wowClass(), query.minimumRating(), query.minimumItemLevel(),
-                currentSeason, ratingFreshAfter, now);
+                currentSeason, evidenceFreshAfter, now);
 
         return boardListings.search(criteria).stream()
-                .map(candidate -> new BoardEntry(candidate.listing(), candidate.character(),
-                        isStale(candidate, query, currentSeason, ratingFreshAfter)))
+                .map(candidate -> new BoardEntry(
+                        candidate.listing(),
+                        candidate.character(),
+                        isRatingStale(candidate, query, currentSeason, evidenceFreshAfter),
+                        isGearStale(candidate, evidenceFreshAfter)))
                 .toList();
     }
 
-    private boolean isStale(BoardListings.BoardCandidate candidate, SearchBoardQuery query,
-                            PvpSeason currentSeason, Instant ratingFreshAfter) {
+    private boolean isRatingStale(BoardListings.BoardCandidate candidate,
+                                  SearchBoardQuery query,
+                                  PvpSeason currentSeason,
+                                  Instant evidenceFreshAfter) {
         return candidate.character().standingFor(query.bracket())
                 .map(standing -> !standing.season().equals(currentSeason)
-                        || standing.observedAt().isBefore(ratingFreshAfter))
+                        || standing.observedAt().isBefore(evidenceFreshAfter))
                 .orElse(false);
+    }
+
+    private boolean isGearStale(BoardListings.BoardCandidate candidate,
+                                Instant evidenceFreshAfter) {
+        return candidate.character().gear().observedAt().isBefore(evidenceFreshAfter);
     }
 }

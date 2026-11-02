@@ -118,8 +118,16 @@ public class LfgListing {
         return true;
     }
 
-    public boolean isActive() {
-        return status == ListingStatus.ACTIVE;
+    /**
+     * Whether the listing is live at {@code now}: ACTIVE and not yet due.
+     * The same predicate the board SQL uses — {@code status = 'ACTIVE' and
+     * expires_at > now} — so a Java caller can never believe a listing is
+     * visible when the database would hide it. At exactly {@code expiresAt}
+     * the listing is already due.
+     */
+    public boolean isActiveAt(Instant now) {
+        Objects.requireNonNull(now, "now must not be null");
+        return status == ListingStatus.ACTIVE && now.isBefore(expiresAt);
     }
 
     public ListingId id() {

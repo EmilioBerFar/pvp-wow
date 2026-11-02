@@ -331,6 +331,11 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   is marked `ratingStale`; its value and `observedAt` remain visible. With no
   minimum-CR filter the candidate stays on the board. At exactly 30 days the
   observation is still fresh. Unranked is not stale.
+- **Gear follows the same freshness policy (user decision).** A gear snapshot
+  observed more than 30 days ago is marked `gearStale`; its item level and
+  `observedAt` remain visible, but a minimum-item-level filter only matches
+  gear observed at or after the same 30-day threshold. At exactly 30 days the
+  snapshot is still fresh.
 - **Read policy is split from query execution.** `SearchBoardService` owns
   time, season and freshness; `BoardListings` owns active/unexpired filtering,
   optional predicates and recency ordering. The future SQL adapter must prove
@@ -355,6 +360,11 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   the slot forever. `JpaListings.publish` marks the character's due ACTIVE rows
   EXPIRED using the new listing's `createdAt` as the reference, then inserts in
   the same transaction.
+- **Publish accepts only a live aggregate.** `JpaListings.publish` rejects a
+  listing that is not live at its own `createdAt`, so a cancelled or expired
+  aggregate can never resurrect as a row. `LfgListing.isActiveAt(now)` is the
+  same predicate as the board SQL — `status = 'ACTIVE' and expires_at > now` —
+  and at exactly `expiresAt` the listing is already due.
 - **The partial unique index is still the law.** `ux_lfg_listings_active`
   arbitrates concurrent publishers that both raced past the application-level
   pre-check. The adapter reads SQLState 23505 from the cause chain and turns
@@ -375,20 +385,28 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   filtered query; languages, windows, specs and standings are loaded by id
   lists. Each query has one job and no cartesian product.
 - **Class and item-level filters are direct predicates** on
-  `characters.wow_class` and `characters.item_level`; the region and bracket
+  `characters.wow_class` and `characters.item_level`; when a minimum item level
+  is requested the query also requires `characters.gear_observed_at >=
+  evidenceFreshAfter`, so old gear cannot satisfy it. The region and bracket
   predicates are mandatory, as in the port.
 - **Staleness stays application-owned.** `SearchBoardService` computes
-  `ratingFreshAfter` and marks rows; the adapter only executes criteria. The
-  board never mutates observed evidence.
+  `evidenceFreshAfter` and marks both `ratingStale` and `gearStale`; the
+  adapter only executes criteria. The board never mutates observed evidence.
 - **Boundaries.** WU11 adds no REST endpoints, no bean wiring of the use cases
   and no TTL configuration; those are WU12. Pagination is still absent from the
   port and must be bounded before the board is public.
 - **Tests against real Postgres.** `JpaListingsIT` covers the round trip, the
-  expiry sweep, the active query boundary and the duplicate index.
-  `JdbcBoardListingsIT` covers region/bracket isolation, overdue and cancelled
-  rows, class/item-level/rating filters, the exactly-30-day boundary,
-  previous-season and unranked evidence, recency order and full aggregate
-  hydration. Both run in failsafe (`mvnw verify`).
+  expiry sweep, the active query boundary, the publish guard and the duplicate
+  index. `JdbcBoardListingsIT` covers region/bracket isolation, overdue and
+  cancelled rows, class/item-level/rating filters, the exactly-30-day
+  boundaries for ratings and gear, previous-season and unranked evidence,
+  recency order and full aggregate hydration. Both run in failsafe
+  (`mvnw verify`).
+- **Retention is a scheduled job, not lazy cleanup (user decision, later
+  WU).** A daily job will mark overdue ACTIVE listings EXPIRED and delete
+  CANCELLED/EXPIRED rows older than 30 days. Publishing already expires the
+  character's due rows for the bracket it touches, but every other overdue row
+  stays ACTIVE until then, so the sweep is required before the board is public.
 
 ## Error strategy (decided before the application layer)
 

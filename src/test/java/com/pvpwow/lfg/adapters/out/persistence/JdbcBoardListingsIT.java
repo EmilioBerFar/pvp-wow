@@ -34,6 +34,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
+import java.sql.Timestamp;
 import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
@@ -114,11 +115,8 @@ class JdbcBoardListingsIT {
 
         Character cancelled = savedCharacter("Bear", Region.EU, WowClass.DRUID, 675,
                 Set.of(Specialization.DRUID_GUARDIAN), Map.of());
-        LfgListing cancelledListing = LfgListing.publish(cancelled.id(), Bracket.THREE_VS_THREE,
-                Specialization.DRUID_GUARDIAN, Set.of(Language.ES), SCHEDULE,
-                NOW.minus(Duration.ofHours(1)), TTL);
-        cancelledListing.cancel();
-        listings.publish(cancelledListing);
+        seedListing(cancelled, Bracket.THREE_VS_THREE, Specialization.DRUID_GUARDIAN,
+                "CANCELLED", NOW.minus(Duration.ofHours(1)));
 
         assertThat(board.search(criteria(null, null, null)))
                 .extracting(candidate -> candidate.listing().id())
@@ -143,6 +141,35 @@ class JdbcBoardListingsIT {
         assertThat(board.search(criteria(WowClass.MAGE, null, new ItemLevel(670))))
                 .extracting(candidate -> candidate.listing().id())
                 .containsExactly(included.id());
+    }
+
+    @Test
+    void aMinimumItemLevelAcceptsOnlyFreshGearAndStaleGearStaysVisible() {
+        Character fresh = savedCharacter("Frostbolt", Region.EU, WowClass.MAGE, 680,
+                GEAR_OBSERVED_AT, Set.of(Specialization.MAGE_FROST), Map.of());
+        LfgListing freshListing = publish(fresh, Bracket.THREE_VS_THREE,
+                NOW.minus(Duration.ofHours(1)));
+
+        Character boundary = savedCharacter("Boundary", Region.EU, WowClass.MAGE, 670,
+                FRESH_AFTER, Set.of(Specialization.MAGE_FROST), Map.of());
+        LfgListing boundaryListing = publish(boundary, Bracket.THREE_VS_THREE,
+                NOW.minus(Duration.ofHours(1)));
+
+        Character stale = savedCharacter("Stale", Region.EU, WowClass.MAGE, 690,
+                FRESH_AFTER.minusSeconds(1), Set.of(Specialization.MAGE_FROST), Map.of());
+        LfgListing staleListing = publish(stale, Bracket.THREE_VS_THREE,
+                NOW.minus(Duration.ofHours(1)));
+
+        assertThat(board.search(criteria(null, null, new ItemLevel(670))))
+                .as("gear observed before the window cannot satisfy the filter")
+                .extracting(candidate -> candidate.listing().id())
+                .containsExactlyInAnyOrder(freshListing.id(), boundaryListing.id());
+
+        assertThat(board.search(criteria(null, null, null)))
+                .as("without a minimum the stale gear remains visible")
+                .extracting(candidate -> candidate.listing().id())
+                .containsExactlyInAnyOrder(freshListing.id(), boundaryListing.id(),
+                        staleListing.id());
     }
 
     @Test
@@ -260,16 +287,41 @@ class JdbcBoardListingsIT {
     private Character savedCharacter(String name, Region region, WowClass wowClass, int itemLevel,
                                      Set<Specialization> specs,
                                      Map<Bracket, PvpStanding> standings) {
+        return savedCharacter(name, region, wowClass, itemLevel, GEAR_OBSERVED_AT, specs,
+                standings);
+    }
+
+    private Character savedCharacter(String name, Region region, WowClass wowClass, int itemLevel,
+                                     Instant gearObservedAt, Set<Specialization> specs,
+                                     Map<Bracket, PvpStanding> standings) {
         Character character = Character.register(PLAYER,
                 new CharacterName(name),
                 new Realm("Sanguino"),
                 region,
                 wowClass,
-                new GearSnapshot(new ItemLevel(itemLevel), GEAR_OBSERVED_AT),
+                new GearSnapshot(new ItemLevel(itemLevel), gearObservedAt),
                 specs,
                 standings);
         characters.save(character);
         return character;
+    }
+
+    /**
+     * Seeds a row the write adapter now refuses by design (CANCELLED or
+     * EXPIRED): the board query must still filter it out, and only direct SQL
+     * can put it in the table.
+     */
+    private void seedListing(Character character, Bracket bracket, Specialization spec,
+                             String status, Instant createdAt) {
+        jdbc.update("""
+                        insert into lfg_listings
+                            (id, character_id, bracket, spec, status, availability_zone,
+                             created_at, expires_at)
+                        values (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                UUID.randomUUID(), character.id().value(), bracket.name(), spec.name(),
+                status, "Europe/Madrid",
+                Timestamp.from(createdAt), Timestamp.from(createdAt.plus(TTL)));
     }
 
     private LfgListing publish(Character character, Bracket bracket, Instant createdAt) {

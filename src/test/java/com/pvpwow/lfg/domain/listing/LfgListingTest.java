@@ -29,7 +29,7 @@ class LfgListingTest {
 
         assertThat(listing.id()).isNotNull();
         assertThat(listing.status()).isEqualTo(ListingStatus.ACTIVE);
-        assertThat(listing.isActive()).isTrue();
+        assertThat(listing.isActiveAt(NOW)).isTrue();
         assertThat(listing.createdAt()).isEqualTo(NOW);
         assertThat(listing.expiresAt()).isEqualTo(NOW.plus(TTL));
         assertThat(listing.spec()).isEqualTo(Specialization.MAGE_FROST);
@@ -65,7 +65,7 @@ class LfgListingTest {
         listing.cancel();
 
         assertThat(listing.status()).isEqualTo(ListingStatus.CANCELLED);
-        assertThat(listing.isActive()).isFalse();
+        assertThat(listing.isActiveAt(NOW)).isFalse();
     }
 
     @Test
@@ -76,6 +76,17 @@ class LfgListingTest {
         assertThatThrownBy(listing::cancel)
                 .isInstanceOf(DomainRuleViolationException.class)
                 .hasMessageContaining("CANCELLED");
+    }
+
+    @Test
+    void anActiveListingIsNoLongerActiveAtExactlyItsExpiryInstant() {
+        LfgListing listing = publishListing();
+
+        assertThat(listing.isActiveAt(NOW.plus(TTL).minusNanos(1))).isTrue();
+        assertThat(listing.isActiveAt(NOW.plus(TTL)))
+                .as("the SQL uses expires_at > now, so now == expiresAt is already due")
+                .isFalse();
+        assertThat(listing.status()).isEqualTo(ListingStatus.ACTIVE);
     }
 
     @Test
@@ -123,7 +134,7 @@ class LfgListingTest {
 
         assertThat(listing.expireIfDue(NOW.plus(TTL).plusSeconds(60))).isFalse();
         assertThat(listing.status()).isEqualTo(ListingStatus.CANCELLED);
-        assertThat(listing.isActive()).isFalse();
+        assertThat(listing.isActiveAt(NOW)).isFalse();
     }
 
     @Test

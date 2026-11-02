@@ -41,10 +41,11 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * The board query, in SQL. Filters run where PostgreSQL can use indexes and
- * the freshness rule is an {@code EXISTS} over the bracket's standing, so a
- * candidate with an old or previous-season rating simply fails a minimum-CR
- * filter instead of contaminating the result set in Java.
+ * The board query, in SQL. Filters run where PostgreSQL can use indexes: a
+ * minimum CR is an {@code EXISTS} over the bracket's current-season standing
+ * and a minimum item level is a predicate on freshly observed gear, so a
+ * candidate with old evidence simply fails its filter instead of
+ * contaminating the result set in Java.
  *
  * <p>Hydration is explicit and batched: three queries for the listing rows and
  * one per child collection, keyed by the ids the first query returned. A JPA
@@ -65,7 +66,8 @@ final class JdbcBoardListings implements BoardListings {
         MapSqlParameterSource parameters = new MapSqlParameterSource()
                 .addValue("region", criteria.region().name())
                 .addValue("bracket", criteria.bracket().name())
-                .addValue("now", Timestamp.from(criteria.now()));
+                .addValue("now", Timestamp.from(criteria.now()))
+                .addValue("evidenceFreshAfter", Timestamp.from(criteria.evidenceFreshAfter()));
 
         List<BoardRow> rows = jdbc.query(boardSql(criteria, parameters), parameters,
                 (rs, rowNumber) -> row(rs));
@@ -121,6 +123,7 @@ final class JdbcBoardListings implements BoardListings {
         }
         if (criteria.minimumItemLevel() != null) {
             sql.append("   and c.item_level >= :minimumItemLevel\n");
+            sql.append("   and c.gear_observed_at >= :evidenceFreshAfter\n");
             parameters.addValue("minimumItemLevel", criteria.minimumItemLevel().value());
         }
         if (criteria.minimumRating() != null) {
@@ -132,12 +135,11 @@ final class JdbcBoardListings implements BoardListings {
                                 and s.bracket = :bracket
                                 and s.rating >= :minimumRating
                                 and s.season_id = :currentSeason
-                                and s.observed_at >= :ratingFreshAfter
+                                and s.observed_at >= :evidenceFreshAfter
                        )
                     """);
             parameters.addValue("minimumRating", criteria.minimumRating().value());
             parameters.addValue("currentSeason", criteria.currentSeason().id());
-            parameters.addValue("ratingFreshAfter", Timestamp.from(criteria.ratingFreshAfter()));
         }
 
         sql.append(" order by l.created_at desc, l.id desc");

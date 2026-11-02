@@ -190,8 +190,7 @@ class PublishListingServiceTest {
         public boolean hasActiveFor(CharacterId characterId, Bracket bracket, Instant now) {
             return saved.stream().anyMatch(listing -> listing.characterId().equals(characterId)
                     && listing.bracket() == bracket
-                    && listing.isActive()
-                    && listing.expiresAt().isAfter(now));
+                    && listing.isActiveAt(now));
         }
 
         LfgListing onlySaved() {

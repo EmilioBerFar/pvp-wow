@@ -67,12 +67,12 @@ class SearchBoardServiceTest {
         assertThat(criteria.minimumItemLevel()).isEqualTo(new ItemLevel(670));
         assertThat(criteria.currentSeason()).isEqualTo(CURRENT_SEASON);
         assertThat(criteria.now()).isEqualTo(NOW);
-        assertThat(criteria.ratingFreshAfter()).isEqualTo(NOW.minus(Duration.ofDays(30)));
+        assertThat(criteria.evidenceFreshAfter()).isEqualTo(NOW.minus(Duration.ofDays(30)));
     }
 
     @Test
     void returnsTheCandidatesWithTheirDomainEvidenceIntact() {
-        BoardCandidate candidate = candidate(standing(1900, CURRENT_SEASON, NOW));
+        BoardCandidate candidate = candidate(standing(1900, CURRENT_SEASON, NOW), NOW);
         boardListings.results.add(candidate);
 
         List<BoardEntry> entries = service.search(query());
@@ -82,12 +82,14 @@ class SearchBoardServiceTest {
         assertThat(entries.getFirst().character()).isEqualTo(candidate.character());
         assertThat(entries.getFirst().character().gear().observedAt()).isEqualTo(NOW);
         assertThat(entries.getFirst().ratingStale()).isFalse();
+        assertThat(entries.getFirst().gearStale()).isFalse();
     }
 
     @Test
     void marksARatingOlderThanThirtyDaysAsStaleWithoutRemovingIt() {
         boardListings.results.add(candidate(
-                standing(1900, CURRENT_SEASON, NOW.minus(Duration.ofDays(30)).minusNanos(1))));
+                standing(1900, CURRENT_SEASON, NOW.minus(Duration.ofDays(30)).minusNanos(1)),
+                NOW));
 
         List<BoardEntry> entries = service.search(query());
 
@@ -101,15 +103,40 @@ class SearchBoardServiceTest {
     @Test
     void exactlyThirtyDaysOldIsStillFresh() {
         boardListings.results.add(candidate(
-                standing(1900, CURRENT_SEASON, NOW.minus(Duration.ofDays(30)))));
+                standing(1900, CURRENT_SEASON, NOW.minus(Duration.ofDays(30))), NOW));
 
         assertThat(service.search(query())).singleElement()
                 .satisfies(entry -> assertThat(entry.ratingStale()).isFalse());
     }
 
     @Test
+    void marksGearOlderThanThirtyDaysAsStaleWithoutHidingTheItemLevel() {
+        boardListings.results.add(candidate(
+                standing(1900, CURRENT_SEASON, NOW),
+                NOW.minus(Duration.ofDays(30)).minusNanos(1)));
+
+        List<BoardEntry> entries = service.search(query());
+
+        assertThat(entries).singleElement().satisfies(entry -> {
+            assertThat(entry.gearStale()).isTrue();
+            assertThat(entry.character().itemLevel()).isEqualTo(new ItemLevel(675));
+            assertThat(entry.character().gear().observedAt())
+                    .isEqualTo(NOW.minus(Duration.ofDays(30)).minusNanos(1));
+        });
+    }
+
+    @Test
+    void gearObservedExactlyThirtyDaysAgoIsStillFresh() {
+        boardListings.results.add(candidate(
+                standing(1900, CURRENT_SEASON, NOW), NOW.minus(Duration.ofDays(30))));
+
+        assertThat(service.search(query())).singleElement()
+                .satisfies(entry -> assertThat(entry.gearStale()).isFalse());
+    }
+
+    @Test
     void aPreviousSeasonRatingIsStaleEvenIfItWasJustObserved() {
-        boardListings.results.add(candidate(standing(2400, new PvpSeason(41), NOW)));
+        boardListings.results.add(candidate(standing(2400, new PvpSeason(41), NOW), NOW));
 
         assertThat(service.search(query())).singleElement()
                 .satisfies(entry -> assertThat(entry.ratingStale()).isTrue());
@@ -117,7 +144,7 @@ class SearchBoardServiceTest {
 
     @Test
     void anUnrankedCandidateHasNoRatingToMarkAsStale() {
-        boardListings.results.add(candidate(null));
+        boardListings.results.add(candidate(null, NOW));
 
         assertThat(service.search(query())).singleElement()
                 .satisfies(entry -> assertThat(entry.ratingStale()).isFalse());
@@ -128,13 +155,17 @@ class SearchBoardServiceTest {
     }
 
     private BoardCandidate candidate(PvpStanding standing) {
+        return candidate(standing, NOW);
+    }
+
+    private BoardCandidate candidate(PvpStanding standing, Instant gearObservedAt) {
         CharacterId characterId = new CharacterId(UUID.randomUUID());
         Map<Bracket, PvpStanding> standings = standing == null
                 ? Map.of()
                 : Map.of(Bracket.TWO_VS_TWO, standing);
         Character character = Character.rehydrate(characterId, new PlayerId(UUID.randomUUID()),
                 new CharacterName("Frostbolt"), new Realm("sanguino"), Region.EU, WowClass.MAGE,
-                new GearSnapshot(new ItemLevel(675), NOW),
+                new GearSnapshot(new ItemLevel(675), gearObservedAt),
                 Set.of(Specialization.MAGE_FROST), standings);
         LfgListing listing = LfgListing.publish(characterId, Bracket.TWO_VS_TWO,
                 Specialization.MAGE_FROST, Set.of(Language.ES), SCHEDULE, NOW, Duration.ofHours(24));

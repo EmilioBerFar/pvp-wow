@@ -38,8 +38,12 @@ public interface SearchBoard {
      * pinned spec, availability, gear date and rating date instead of receiving
      * a bag of preformatted strings. Staleness is a read-time fact, so it lives
      * here and is never written back to the character.
+     *
+     * <p>Both stale flags use the same 30-day window: old evidence stays
+     * visible and marked, it is never mutated or silently dropped.
      */
-    record BoardEntry(LfgListing listing, Character character, boolean ratingStale) {
+    record BoardEntry(LfgListing listing, Character character, boolean ratingStale,
+                      boolean gearStale) {
 
         public BoardEntry {
             Objects.requireNonNull(listing, "listing must not be null");

@@ -25,6 +25,10 @@ import java.time.Instant;
  * class. Why {@code persist} instead of {@code save}: the domain assigns the
  * UUID, so Spring Data's newness heuristic would route to {@code merge} and
  * skip the insert.
+ *
+ * <p>The publish door accepts only a live aggregate. A CANCELLED or EXPIRED
+ * listing reaching this adapter is a caller bug, not a business outcome, so it
+ * fails before any SQL runs.
  */
 @Component
 final class JpaListings implements Listings {
@@ -43,6 +47,15 @@ final class JpaListings implements Listings {
 
     @Override
     public void publish(LfgListing listing) {
+        // A listing is published once, at the instant the aggregate was
+        // created, so createdAt is the reference time for liveness. The
+        // aggregate already guarantees expiresAt > createdAt; the guard is
+        // here for the other half of the predicate: a CANCELLED or EXPIRED
+        // aggregate must never resurrect as a live row.
+        if (!listing.isActiveAt(listing.createdAt())) {
+            throw new IllegalArgumentException(
+                    "Only an active listing can be published, got: %s".formatted(listing));
+        }
         try {
             transactions.executeWithoutResult(status -> {
                 repository.expireDue(listing.characterId().value(), listing.bracket(),

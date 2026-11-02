@@ -171,6 +171,20 @@ class JpaListingsIT {
     }
 
     @Test
+    void refusesToPublishAListingThatIsNotActive() {
+        Character character = savedCharacter("Frostbolt");
+        LfgListing cancelled = LfgListing.publish(character.id(), Bracket.THREE_VS_THREE,
+                Specialization.MAGE_FROST, Set.of(Language.ES), SCHEDULE, NOW, TTL);
+        cancelled.cancel();
+
+        assertThatThrownBy(() -> listings.publish(cancelled))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Only an active listing");
+
+        assertThat(countIn("lfg_listings")).isZero();
+    }
+
+    @Test
     void theDatabaseStillEnforcesUniquenessWhenTheAdapterSweepIsSkipped() {
         Character character = savedCharacter("Frostbolt");
         publish(character, Bracket.THREE_VS_THREE, NOW);
