@@ -104,6 +104,24 @@ public class LfgListing {
     }
 
     /**
+     * A group formed: this listing found its player. Only an ACTIVE listing
+     * can complete — the same reason {@link #cancel()} refuses a dead one.
+     *
+     * <p>COMPLETED is the only state that counts as a success, so it is
+     * reached exclusively through a mutual handshake: the owner accepted a
+     * join request. There is no "I found a group myself" button, because it
+     * cannot be verified and it can be abused to forge successes.
+     */
+    public void complete() {
+        if (status != ListingStatus.ACTIVE) {
+            throw new DomainRuleViolationException(
+                    "Only an ACTIVE listing can be completed, current status: %s"
+                            .formatted(status));
+        }
+        this.status = ListingStatus.COMPLETED;
+    }
+
+    /**
      * Expires the listing when due. Idempotent by design: whatever runs this
      * (a scheduled job, a query on read) may call it repeatedly.
      *
