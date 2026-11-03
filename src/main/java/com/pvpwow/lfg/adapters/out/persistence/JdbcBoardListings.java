@@ -1,6 +1,7 @@
 package com.pvpwow.lfg.adapters.out.persistence;
 
 import com.pvpwow.lfg.application.port.out.BoardListings;
+import com.pvpwow.lfg.application.port.out.BoardListings.BoardSlice;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
@@ -62,17 +63,30 @@ final class JdbcBoardListings implements BoardListings {
     }
 
     @Override
-    public List<BoardCandidate> search(SearchCriteria criteria) {
+    public BoardSlice search(SearchCriteria criteria) {
         MapSqlParameterSource parameters = new MapSqlParameterSource()
                 .addValue("region", criteria.region().name())
                 .addValue("bracket", criteria.bracket().name())
                 .addValue("now", Timestamp.from(criteria.now()))
-                .addValue("evidenceFreshAfter", Timestamp.from(criteria.evidenceFreshAfter()));
+                .addValue("evidenceFreshAfter", Timestamp.from(criteria.evidenceFreshAfter()))
+                .addValue("fetchLimit", criteria.limit() + 1);
 
-        List<BoardRow> rows = jdbc.query(boardSql(criteria, parameters), parameters,
-                (rs, rowNumber) -> row(rs));
+        if (criteria.cursor() != null) {
+            parameters.addValue("cursorCreatedAt", Timestamp.from(criteria.cursor().createdAt()));
+            parameters.addValue("cursorListingId", criteria.cursor().listingId().value());
+        }
+
+        List<BoardRow> rows = jdbc.query(
+                boardSql(criteria, parameters), parameters, (rs, rowNumber) -> row(rs));
+
+        // One extra row answers "is there another page?" without a second
+        // count query, and the extra row is never hydrated or returned.
+        boolean hasMore = rows.size() > criteria.limit();
+        if (hasMore) {
+            rows = rows.subList(0, criteria.limit());
+        }
         if (rows.isEmpty()) {
-            return List.of();
+            return new BoardSlice(List.of(), false);
         }
 
         List<UUID> listingIds = rows.stream().map(BoardRow::listingId).toList();
@@ -89,7 +103,7 @@ final class JdbcBoardListings implements BoardListings {
                     listing(row, languages, windows),
                     character(row, specs, standings)));
         }
-        return List.copyOf(candidates);
+        return new BoardSlice(candidates, hasMore);
     }
 
     private static String boardSql(SearchCriteria criteria, MapSqlParameterSource parameters) {
@@ -142,7 +156,16 @@ final class JdbcBoardListings implements BoardListings {
             parameters.addValue("currentSeason", criteria.currentSeason().id());
         }
 
-        sql.append(" order by l.created_at desc, l.id desc");
+        if (criteria.cursor() != null) {
+            // Row-value comparison, not two OR'd conditions: PostgreSQL turns
+            // it into one index range on (created_at desc, id desc).
+            sql.append("   and (l.created_at, l.id) < (:cursorCreatedAt, :cursorListingId)\n");
+        }
+
+        sql.append("""
+                 order by l.created_at desc, l.id desc
+                 limit :fetchLimit
+                """);
         return sql.toString();
     }
 

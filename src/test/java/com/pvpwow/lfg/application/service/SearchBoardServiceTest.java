@@ -1,9 +1,13 @@
 package com.pvpwow.lfg.application.service;
 
+import com.pvpwow.lfg.application.port.in.SearchBoard;
+import com.pvpwow.lfg.application.port.in.SearchBoard.BoardCursor;
 import com.pvpwow.lfg.application.port.in.SearchBoard.BoardEntry;
+import com.pvpwow.lfg.application.port.in.SearchBoard.BoardPage;
 import com.pvpwow.lfg.application.port.in.SearchBoard.SearchBoardQuery;
 import com.pvpwow.lfg.application.port.out.BoardListings;
 import com.pvpwow.lfg.application.port.out.BoardListings.BoardCandidate;
+import com.pvpwow.lfg.application.port.out.BoardListings.BoardSlice;
 import com.pvpwow.lfg.application.port.out.BoardListings.SearchCriteria;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
@@ -21,6 +25,7 @@ import com.pvpwow.lfg.domain.character.WowClass;
 import com.pvpwow.lfg.domain.listing.AvailabilitySchedule;
 import com.pvpwow.lfg.domain.listing.Language;
 import com.pvpwow.lfg.domain.listing.LfgListing;
+import com.pvpwow.lfg.domain.listing.ListingId;
 import com.pvpwow.lfg.domain.listing.TimeWindow;
 import com.pvpwow.lfg.domain.player.PlayerId;
 import org.junit.jupiter.api.Test;
@@ -68,6 +73,44 @@ class SearchBoardServiceTest {
         assertThat(criteria.currentSeason()).isEqualTo(CURRENT_SEASON);
         assertThat(criteria.now()).isEqualTo(NOW);
         assertThat(criteria.evidenceFreshAfter()).isEqualTo(NOW.minus(Duration.ofDays(30)));
+        assertThat(criteria.cursor()).isNull();
+        assertThat(criteria.limit()).isEqualTo(SearchBoard.DEFAULT_PAGE_SIZE);
+    }
+
+    @Test
+    void translatesTheInboundCursorAndPageSizeIntoTheReadPortVocabulary() {
+        BoardCursor cursor = new BoardCursor(NOW.minusSeconds(60), new ListingId(UUID.randomUUID()));
+
+        service.search(new SearchBoardQuery(Region.EU, Bracket.TWO_VS_TWO, null, null, null,
+                cursor, 5));
+
+        SearchCriteria criteria = boardListings.lastCriteria;
+        assertThat(criteria.cursor())
+                .isEqualTo(new BoardListings.BoardCursor(cursor.createdAt(), cursor.listingId()));
+        assertThat(criteria.limit()).isEqualTo(5);
+    }
+
+    @Test
+    void anchorsTheNextCursorOnTheLastEntryOfANonFinalPage() {
+        boardListings.results.add(candidate(standing(1900, CURRENT_SEASON, NOW), NOW));
+        boardListings.results.add(candidate(standing(1850, CURRENT_SEASON, NOW), NOW));
+        boardListings.hasMore = true;
+
+        BoardPage page = service.search(query());
+
+        BoardCandidate last = boardListings.results.getLast();
+        assertThat(page.entries()).hasSize(2);
+        assertThat(page.nextCursor()).isEqualTo(
+                new BoardCursor(last.listing().createdAt(), last.listing().id()));
+    }
+
+    @Test
+    void theLastPageHasNoCursorEvenIfItIsFull() {
+        boardListings.results.add(candidate(standing(1900, CURRENT_SEASON, NOW), NOW));
+
+        BoardPage page = service.search(query());
+
+        assertThat(page.nextCursor()).isNull();
     }
 
     @Test
@@ -75,7 +118,7 @@ class SearchBoardServiceTest {
         BoardCandidate candidate = candidate(standing(1900, CURRENT_SEASON, NOW), NOW);
         boardListings.results.add(candidate);
 
-        List<BoardEntry> entries = service.search(query());
+        List<BoardEntry> entries = service.search(query()).entries();
 
         assertThat(entries).hasSize(1);
         assertThat(entries.getFirst().listing()).isEqualTo(candidate.listing());
@@ -91,7 +134,7 @@ class SearchBoardServiceTest {
                 standing(1900, CURRENT_SEASON, NOW.minus(Duration.ofDays(30)).minusNanos(1)),
                 NOW));
 
-        List<BoardEntry> entries = service.search(query());
+        List<BoardEntry> entries = service.search(query()).entries();
 
         assertThat(entries).singleElement().satisfies(entry -> {
             assertThat(entry.ratingStale()).isTrue();
@@ -105,7 +148,7 @@ class SearchBoardServiceTest {
         boardListings.results.add(candidate(
                 standing(1900, CURRENT_SEASON, NOW.minus(Duration.ofDays(30))), NOW));
 
-        assertThat(service.search(query())).singleElement()
+        assertThat(service.search(query()).entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.ratingStale()).isFalse());
     }
 
@@ -115,7 +158,7 @@ class SearchBoardServiceTest {
                 standing(1900, CURRENT_SEASON, NOW),
                 NOW.minus(Duration.ofDays(30)).minusNanos(1)));
 
-        List<BoardEntry> entries = service.search(query());
+        List<BoardEntry> entries = service.search(query()).entries();
 
         assertThat(entries).singleElement().satisfies(entry -> {
             assertThat(entry.gearStale()).isTrue();
@@ -130,7 +173,7 @@ class SearchBoardServiceTest {
         boardListings.results.add(candidate(
                 standing(1900, CURRENT_SEASON, NOW), NOW.minus(Duration.ofDays(30))));
 
-        assertThat(service.search(query())).singleElement()
+        assertThat(service.search(query()).entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.gearStale()).isFalse());
     }
 
@@ -138,7 +181,7 @@ class SearchBoardServiceTest {
     void aPreviousSeasonRatingIsStaleEvenIfItWasJustObserved() {
         boardListings.results.add(candidate(standing(2400, new PvpSeason(41), NOW), NOW));
 
-        assertThat(service.search(query())).singleElement()
+        assertThat(service.search(query()).entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.ratingStale()).isTrue());
     }
 
@@ -146,7 +189,7 @@ class SearchBoardServiceTest {
     void anUnrankedCandidateHasNoRatingToMarkAsStale() {
         boardListings.results.add(candidate(null, NOW));
 
-        assertThat(service.search(query())).singleElement()
+        assertThat(service.search(query()).entries()).singleElement()
                 .satisfies(entry -> assertThat(entry.ratingStale()).isFalse());
     }
 
@@ -179,12 +222,13 @@ class SearchBoardServiceTest {
     private static final class FakeBoardListings implements BoardListings {
 
         private final List<BoardCandidate> results = new ArrayList<>();
+        private boolean hasMore;
         private SearchCriteria lastCriteria;
 
         @Override
-        public List<BoardCandidate> search(SearchCriteria criteria) {
+        public BoardSlice search(SearchCriteria criteria) {
             lastCriteria = criteria;
-            return List.copyOf(results);
+            return new BoardSlice(results, hasMore);
         }
     }
 }

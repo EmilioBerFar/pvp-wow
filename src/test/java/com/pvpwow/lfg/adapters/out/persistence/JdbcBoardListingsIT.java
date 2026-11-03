@@ -1,7 +1,10 @@
 package com.pvpwow.lfg.adapters.out.persistence;
 
+import com.pvpwow.lfg.application.port.in.SearchBoard;
 import com.pvpwow.lfg.application.port.out.BoardListings;
 import com.pvpwow.lfg.application.port.out.BoardListings.BoardCandidate;
+import com.pvpwow.lfg.application.port.out.BoardListings.BoardCursor;
+import com.pvpwow.lfg.application.port.out.BoardListings.BoardSlice;
 import com.pvpwow.lfg.application.port.out.BoardListings.SearchCriteria;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.Listings;
@@ -40,6 +43,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -118,7 +122,7 @@ class JdbcBoardListingsIT {
         seedListing(cancelled, Bracket.THREE_VS_THREE, Specialization.DRUID_GUARDIAN,
                 "CANCELLED", NOW.minus(Duration.ofHours(1)));
 
-        assertThat(board.search(criteria(null, null, null)))
+        assertThat(search(criteria(null, null, null)))
                 .extracting(candidate -> candidate.listing().id())
                 .containsExactly(included.id());
     }
@@ -138,7 +142,7 @@ class JdbcBoardListingsIT {
                 Set.of(Specialization.PRIEST_SHADOW), Map.of());
         publish(gearedPriest, Bracket.THREE_VS_THREE, NOW.minus(Duration.ofHours(1)));
 
-        assertThat(board.search(criteria(WowClass.MAGE, null, new ItemLevel(670))))
+        assertThat(search(criteria(WowClass.MAGE, null, new ItemLevel(670))))
                 .extracting(candidate -> candidate.listing().id())
                 .containsExactly(included.id());
     }
@@ -160,12 +164,12 @@ class JdbcBoardListingsIT {
         LfgListing staleListing = publish(stale, Bracket.THREE_VS_THREE,
                 NOW.minus(Duration.ofHours(1)));
 
-        assertThat(board.search(criteria(null, null, new ItemLevel(670))))
+        assertThat(search(criteria(null, null, new ItemLevel(670))))
                 .as("gear observed before the window cannot satisfy the filter")
                 .extracting(candidate -> candidate.listing().id())
                 .containsExactlyInAnyOrder(freshListing.id(), boundaryListing.id());
 
-        assertThat(board.search(criteria(null, null, null)))
+        assertThat(search(criteria(null, null, null)))
                 .as("without a minimum the stale gear remains visible")
                 .extracting(candidate -> candidate.listing().id())
                 .containsExactlyInAnyOrder(freshListing.id(), boundaryListing.id(),
@@ -199,12 +203,12 @@ class JdbcBoardListingsIT {
                 Set.of(Specialization.MAGE_FROST), Map.of());
         publish(unranked, Bracket.THREE_VS_THREE, NOW.minus(Duration.ofHours(1)));
 
-        assertThat(board.search(criteria(null, new Rating(1800), null)))
+        assertThat(search(criteria(null, new Rating(1800), null)))
                 .as("stale, previous-season and unranked evidence cannot satisfy the filter")
                 .extracting(candidate -> candidate.listing().id())
                 .containsExactlyInAnyOrder(freshListing.id(), boundaryListing.id());
 
-        assertThat(board.search(criteria(null, null, null)))
+        assertThat(search(criteria(null, null, null)))
                 .as("without a minimum the old evidence remains visible")
                 .hasSize(6);
     }
@@ -222,9 +226,74 @@ class JdbcBoardListingsIT {
         LfgListing middleListing = publish(middle, Bracket.THREE_VS_THREE, NOW.minus(Duration.ofHours(2)));
         LfgListing newestListing = publish(newest, Bracket.THREE_VS_THREE, NOW.minus(Duration.ofHours(1)));
 
-        assertThat(board.search(criteria(null, null, null)))
+        assertThat(search(criteria(null, null, null)))
                 .extracting(candidate -> candidate.listing().id())
                 .containsExactly(newestListing.id(), middleListing.id(), oldestListing.id());
+    }
+
+    @Test
+    void paginatesWithoutGapsOrDuplicatesWhenCreationTimesTie() {
+        Instant createdAt = NOW.minus(Duration.ofHours(1));
+        for (String name : List.of("TieOne", "TieTwo", "TieThree", "TieFour", "TieFive")) {
+            Character character = savedCharacter(name, Region.EU, WowClass.MAGE, 675,
+                    Set.of(Specialization.MAGE_FROST), Map.of());
+            publish(character, Bracket.THREE_VS_THREE, createdAt);
+        }
+
+        List<UUID> expected = search(criteria(null, null, null)).stream()
+                .map(candidate -> candidate.listing().id().value())
+                .toList();
+        assertThat(expected).as("five rows share the same created_at").hasSize(5);
+
+        List<UUID> walked = new ArrayList<>();
+        BoardCursor cursor = null;
+        int pages = 0;
+        do {
+            BoardSlice slice = board.search(criteria(null, null, null, cursor, 2));
+            assertThat(slice.candidates()).hasSizeLessThanOrEqualTo(2);
+            slice.candidates().forEach(candidate -> walked.add(candidate.listing().id().value()));
+            pages++;
+            if (slice.hasMore()) {
+                LfgListing last = slice.candidates().getLast().listing();
+                cursor = new BoardCursor(last.createdAt(), last.id());
+            } else {
+                cursor = null;
+            }
+        } while (cursor != null);
+
+        assertThat(pages).isEqualTo(3);
+        assertThat(walked)
+                .as("the tie-break on id must keep the walk stable across pages")
+                .containsExactlyElementsOf(expected);
+    }
+
+    @Test
+    void aFullPageWithNoExtraRowIsTheLastPage() {
+        Instant createdAt = NOW.minus(Duration.ofHours(1));
+        for (String name : List.of("First", "Second")) {
+            Character character = savedCharacter(name, Region.EU, WowClass.MAGE, 675,
+                    Set.of(Specialization.MAGE_FROST), Map.of());
+            publish(character, Bracket.THREE_VS_THREE, createdAt);
+        }
+
+        BoardSlice slice = board.search(criteria(null, null, null, null, 2));
+
+        assertThat(slice.candidates()).hasSize(2);
+        assertThat(slice.hasMore()).isFalse();
+    }
+
+    @Test
+    void aCursorAtTheOldestRowReturnsAnEmptyLastPage() {
+        Character character = savedCharacter("Only", Region.EU, WowClass.MAGE, 675,
+                Set.of(Specialization.MAGE_FROST), Map.of());
+        LfgListing listing = publish(character, Bracket.THREE_VS_THREE,
+                NOW.minus(Duration.ofHours(1)));
+
+        BoardSlice slice = board.search(criteria(null, null, null,
+                new BoardCursor(listing.createdAt(), listing.id()), 2));
+
+        assertThat(slice.candidates()).isEmpty();
+        assertThat(slice.hasMore()).isFalse();
     }
 
     @Test
@@ -247,7 +316,7 @@ class JdbcBoardListingsIT {
                 NOW.minus(Duration.ofHours(1)), TTL);
         listings.publish(listing);
 
-        List<BoardCandidate> results = board.search(criteria(null, null, null));
+        List<BoardCandidate> results = search(criteria(null, null, null));
 
         assertThat(results).singleElement().satisfies(candidate -> {
             LfgListing found = candidate.listing();
@@ -273,10 +342,20 @@ class JdbcBoardListingsIT {
         });
     }
 
+    private List<BoardCandidate> search(SearchCriteria criteria) {
+        return board.search(criteria).candidates();
+    }
+
     private static SearchCriteria criteria(WowClass wowClass, Rating minimumRating,
                                            ItemLevel minimumItemLevel) {
+        return criteria(wowClass, minimumRating, minimumItemLevel, null, SearchBoard.MAX_PAGE_SIZE);
+    }
+
+    private static SearchCriteria criteria(WowClass wowClass, Rating minimumRating,
+                                           ItemLevel minimumItemLevel, BoardCursor cursor,
+                                           int limit) {
         return new SearchCriteria(Region.EU, Bracket.THREE_VS_THREE, wowClass, minimumRating,
-                minimumItemLevel, CURRENT_SEASON, FRESH_AFTER, NOW);
+                minimumItemLevel, CURRENT_SEASON, FRESH_AFTER, NOW, cursor, limit);
     }
 
     private Character ratingCharacter(String name, PvpStanding standing) {

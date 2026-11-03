@@ -7,29 +7,55 @@ import com.pvpwow.lfg.domain.character.Rating;
 import com.pvpwow.lfg.domain.character.Region;
 import com.pvpwow.lfg.domain.character.WowClass;
 import com.pvpwow.lfg.domain.listing.LfgListing;
+import com.pvpwow.lfg.domain.listing.ListingId;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
 /** Driving port: read the active LFG board for one region and bracket. */
 public interface SearchBoard {
 
-    List<BoardEntry> search(SearchBoardQuery query);
+    int DEFAULT_PAGE_SIZE = 20;
+    int MAX_PAGE_SIZE = 50;
+
+    /**
+     * Returns one keyset page. {@link BoardPage#nextCursor()} is null when the
+     * caller reached the end; otherwise it must be sent back verbatim to read
+     * the following page.
+     */
+    BoardPage search(SearchBoardQuery query);
 
     /**
      * Region and bracket are mandatory because rated PvP and its ratings are
      * scoped by both. Null filters mean "do not filter by this field".
+     *
+     * <p>{@code limit} is bounded by the use case, not by the caller: a client
+     * cannot ask for the whole table. The wire default lives in this constant
+     * so every inbound adapter agrees on it.
      */
     record SearchBoardQuery(
             Region region,
             Bracket bracket,
             WowClass wowClass,
             Rating minimumRating,
-            ItemLevel minimumItemLevel) {
+            ItemLevel minimumItemLevel,
+            BoardCursor cursor,
+            int limit) {
 
         public SearchBoardQuery {
             Objects.requireNonNull(region, "region must not be null");
             Objects.requireNonNull(bracket, "bracket must not be null");
+            if (limit < 1 || limit > MAX_PAGE_SIZE) {
+                throw new IllegalArgumentException(
+                        "limit must be between 1 and %d, got: %d".formatted(MAX_PAGE_SIZE, limit));
+            }
+        }
+
+        public SearchBoardQuery(Region region, Bracket bracket, WowClass wowClass,
+                                Rating minimumRating, ItemLevel minimumItemLevel) {
+            this(region, bracket, wowClass, minimumRating, minimumItemLevel, null,
+                    DEFAULT_PAGE_SIZE);
         }
     }
 
@@ -48,6 +74,23 @@ public interface SearchBoard {
         public BoardEntry {
             Objects.requireNonNull(listing, "listing must not be null");
             Objects.requireNonNull(character, "character must not be null");
+        }
+    }
+
+    record BoardPage(List<BoardEntry> entries, BoardCursor nextCursor) {
+
+        public BoardPage {
+            Objects.requireNonNull(entries, "entries must not be null");
+            entries = List.copyOf(entries);
+        }
+    }
+
+    /** Anchor of the last entry this page returned; null cursor = first page. */
+    record BoardCursor(Instant createdAt, ListingId listingId) {
+
+        public BoardCursor {
+            Objects.requireNonNull(createdAt, "createdAt must not be null");
+            Objects.requireNonNull(listingId, "listingId must not be null");
         }
     }
 }
