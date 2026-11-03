@@ -4,6 +4,7 @@ import com.pvpwow.lfg.application.port.out.Listings;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.listing.LfgListing;
+import com.pvpwow.lfg.domain.listing.ListingOutcomeKind;
 import com.pvpwow.lfg.domain.listing.ListingStatus;
 import com.pvpwow.lfg.domain.shared.DomainRuleViolationException;
 import jakarta.persistence.EntityManager;
@@ -26,6 +27,12 @@ import java.time.Instant;
  * UUID, so Spring Data's newness heuristic would route to {@code merge} and
  * skip the insert.
  *
+ * <p>THE SWEEP CLOSES THROUGH THE SHARED CLOSER: the due listing that is
+ * replaced here writes its EXPIRED fact and cancels its pending requests,
+ * exactly like any other close. A close that skipped it would leave the
+ * listing out of the metrics forever and leave the players who asked it
+ * waiting for an answer that can never come.
+ *
  * <p>The publish door accepts only a live aggregate. A CANCELLED or EXPIRED
  * listing reaching this adapter is a caller bug, not a business outcome, so it
  * fails before any SQL runs.
@@ -34,13 +41,16 @@ import java.time.Instant;
 final class JpaListings implements Listings {
 
     private final ListingJpaRepository repository;
+    private final ListingCloser closer;
     private final EntityManager entityManager;
     private final TransactionTemplate transactions;
 
     JpaListings(ListingJpaRepository repository,
+                ListingCloser closer,
                 EntityManager entityManager,
                 PlatformTransactionManager transactionManager) {
         this.repository = repository;
+        this.closer = closer;
         this.entityManager = entityManager;
         this.transactions = new TransactionTemplate(transactionManager);
     }
@@ -58,8 +68,11 @@ final class JpaListings implements Listings {
         }
         try {
             transactions.executeWithoutResult(status -> {
-                repository.expireDue(listing.characterId().value(), listing.bracket(),
-                        ListingStatus.ACTIVE, ListingStatus.EXPIRED, listing.createdAt());
+                // The due row of this character and bracket is closed through
+                // the shared closer: fact + pending requests, same as every
+                // other close.
+                closer.closeDue(listing.characterId(), listing.bracket(),
+                        ListingStatus.EXPIRED, ListingOutcomeKind.EXPIRED, listing.createdAt());
 
                 CharacterEntity character = entityManager.getReference(
                         CharacterEntity.class, listing.characterId().value());

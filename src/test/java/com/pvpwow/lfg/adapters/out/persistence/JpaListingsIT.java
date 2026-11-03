@@ -1,6 +1,7 @@
 package com.pvpwow.lfg.adapters.out.persistence;
 
 import com.pvpwow.lfg.application.port.out.Characters;
+import com.pvpwow.lfg.application.port.out.ListingLifecycle;
 import com.pvpwow.lfg.application.port.out.Listings;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
@@ -14,6 +15,7 @@ import com.pvpwow.lfg.domain.character.Realm;
 import com.pvpwow.lfg.domain.character.Region;
 import com.pvpwow.lfg.domain.character.Specialization;
 import com.pvpwow.lfg.domain.character.WowClass;
+import com.pvpwow.lfg.domain.join.JoinRequest;
 import com.pvpwow.lfg.domain.listing.AvailabilitySchedule;
 import com.pvpwow.lfg.domain.listing.Language;
 import com.pvpwow.lfg.domain.listing.LfgListing;
@@ -81,6 +83,9 @@ class JpaListingsIT {
 
     @Autowired
     private Listings listings;
+
+    @Autowired
+    private ListingLifecycle lifecycle;
 
     @Autowired
     private ListingJpaRepository repository;
@@ -202,6 +207,36 @@ class JpaListingsIT {
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    @Test
+    void publishingOverADueListingRecordsItsExpiredFact() {
+        Character character = savedCharacter("Frostbolt");
+        LfgListing first = publish(character, Bracket.THREE_VS_THREE, NOW);
+
+        publish(character, Bracket.THREE_VS_THREE, NOW.plus(Duration.ofHours(25)));
+
+        assertThat(kindOfOutcome(first))
+                .as("a listing replaced by a new publication is still a fact of the metrics")
+                .isEqualTo("EXPIRED");
+        assertThat(countIn("listing_outcomes")).isEqualTo(1);
+    }
+
+    @Test
+    void publishingOverADueListingCancelsItsPendingRequests() {
+        Character character = savedCharacter("Frostbolt");
+        Character stranger = savedCharacter("Ember");
+        LfgListing first = publish(character, Bracket.THREE_VS_THREE, NOW);
+        // Somebody asked to join the listing that is about to be replaced.
+        JoinRequest request = JoinRequest.request(stranger.id(), first.id(), NOW,
+                first.expiresAt());
+        lifecycle.save(request);
+
+        publish(character, Bracket.THREE_VS_THREE, NOW.plus(Duration.ofHours(25)));
+
+        assertThat(statusOfRequest(request))
+                .as("the request was waiting for an answer that can never come")
+                .isEqualTo("CANCELLED");
+    }
+
     private LfgListing publish(Character character, Bracket bracket, Instant createdAt) {
         LfgListing listing = LfgListing.publish(character.id(), bracket,
                 Specialization.MAGE_FROST, Set.of(Language.ES, Language.EN), SCHEDULE,
@@ -227,6 +262,16 @@ class JpaListingsIT {
     private String statusOf(LfgListing listing) {
         return jdbc.queryForObject("select status from lfg_listings where id = ?",
                 String.class, listing.id().value());
+    }
+
+    private String kindOfOutcome(LfgListing listing) {
+        return jdbc.queryForObject("select kind from listing_outcomes where listing_id = ?",
+                String.class, listing.id().value());
+    }
+
+    private String statusOfRequest(JoinRequest request) {
+        return jdbc.queryForObject("select status from join_requests where id = ?",
+                String.class, request.id().value());
     }
 
     private int countIn(String table) {

@@ -73,10 +73,11 @@ public final class RequestToJoinService implements RequestToJoin {
             throw new DomainRuleViolationException(
                     "You already have a pending request for this listing");
         }
-        if (lifecycle.pendingRequestCount(caller) >= MAX_PENDING_REQUESTS) {
+        if (lifecycle.pendingRequestCount(caller, now) >= MAX_PENDING_REQUESTS) {
             throw new DomainRuleViolationException(
                     "You already have %d pending requests (the limit is %d)"
-                            .formatted(lifecycle.pendingRequestCount(caller), MAX_PENDING_REQUESTS));
+                            .formatted(lifecycle.pendingRequestCount(caller, now),
+                                    MAX_PENDING_REQUESTS));
         }
 
         // A request lives exactly as long as the listing it asks for: no

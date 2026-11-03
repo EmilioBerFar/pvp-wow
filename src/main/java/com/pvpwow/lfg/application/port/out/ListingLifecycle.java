@@ -27,26 +27,29 @@ public interface ListingLifecycle {
     /**
      * Closes as COMPLETED every active listing of the listing owner and of the
      * requester, writes one fact per closed listing, cancels every PENDING
-     * join request of the requester's PLAYER and marks the accepted request
-     * ACCEPTED. ALL OR NOTHING.
+     * join request of BOTH players and marks the accepted request ACCEPTED.
+     * ALL OR NOTHING.
      *
      * @return the facts of the closed listings
      */
     List<ListingOutcome> completeGroup(JoinRequest acceptedRequest,
                                         CharacterId ownerId,
                                         CharacterId requesterId,
+                                        PlayerId ownerPlayerId,
                                         PlayerId requesterOwnerId,
                                         Instant now);
 
     /**
      * Closes one listing as CANCELLED (the owner pulled it) and writes its
-     * fact.
+     * fact. The PENDING requests aimed at that listing are cancelled too: the
+     * listing they wanted no longer exists.
      */
     ListingOutcome withdraw(ListingId listingId, CharacterId characterId, Instant now);
 
     /**
      * Closes one listing as EXPIRED and writes its fact. Used by the retention
      * job, which is the only thing that marks a listing as dead by the clock.
+     * The PENDING requests aimed at that listing expire with it.
      */
     ListingOutcome expire(ListingId listingId, CharacterId characterId, Instant now);
 
@@ -68,6 +71,17 @@ public interface ListingLifecycle {
     /**
      * How many PENDING requests the player has open. The limit keeps a player
      * from carpet-bombing the board.
+     *
+     * <p>Only the requests that are still ALIVE count: a request whose
+     * listing has died is expired by definition, even before the retention
+     * job marks it. Counting it would block the player forever.
      */
-    int pendingRequestCount(PlayerId ownerId);
+    int pendingRequestCount(PlayerId ownerId, Instant now);
+
+    /**
+     * Marks the PENDING requests that outlived their listing as EXPIRED.
+     * The retention job is the only thing that runs it: it is the clock that
+     * decides.
+     */
+    int expirePendingRequests(Instant now);
 }

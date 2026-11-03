@@ -637,10 +637,46 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
 - **Why 3 pending requests, and not 1.** A single global pending request
   blocks a player who found no answer for the whole life of the listing (24
   hours). Three keeps the queue short without stranding anybody.
-- **Starting to play cancels every pending request of the PLAYER** (not just
+- **Starting to play cancels every pending request of BOTH players** (not just
   of the character that was accepted), in the same transaction as the close.
-  It is the same rule as "starting to play closes all your listings", applied
-  to the requests still waiting for an answer.
+  The owner is playing too, so anything they were waiting for is irrelevant,
+  and anything they were asking for dies with their search.
+- **A closed listing takes its pending requests with it.** When a listing
+  closes — COMPLETED, CANCELLED by the owner, or EXPIRED — every PENDING
+  request aimed at it is cancelled in the same transaction. Otherwise the
+  requests of other players stay hanging, waiting for an answer that can
+  never come, and keep occupying their slots.
+- **Only the requests that are still ALIVE count towards the limit of three.**
+  A request whose listing has died is expired by definition, even before the
+  retention job marks it: `expires_at > now` is part of the count. Otherwise
+  a player with three requests to expired listings would be blocked for
+  good. The retention job (WU16) is what marks them EXPIRED.
+- **There is ONE way to close a listing.** Every close — the owner pulling
+  it, the group forming, the clock running out, and the sweep that frees the
+  slot for a new publication — goes through `ListingCloser`. A close that
+  skipped it would write no fact (so the listing would never appear in the
+  metrics) and would leave its pending requests hanging (so the players who
+  asked would keep their slots occupied). Both failures are invisible in the
+  UI: the board looks fine and the numbers are quietly wrong. One door makes
+  them impossible.
+- **The sweep that frees the slot writes the fact too.** The `expireDue`
+  update inside `JpaListings.publish` used to mark the due row EXPIRED and
+  nothing else: the listing would never reach the metrics, because the
+  retention job would find it already EXPIRED and skip it. It closes through
+  the shared closer now, in the same transaction as the new publication.
+- **Derived Spring Data finders are a trap for ranges.**
+  `findByCharacterIdAndBracketAndStatusAndExpiresAt(…, Instant)` reads as an
+  EQUALITY on `expires_at`, not as `<=`. The sweep compiled, ran, found no
+  rows and let the new publication hit `ux_lfg_listings_active`, so the bug
+  looked like a uniqueness problem instead of a query problem. Any range
+  predicate gets an explicit `@Query`; the method name is not documentation.
+- **The unit close is per entity; the WU16 job will need it batched.**
+  `ListingCloser.close` issues one `UPDATE`, one request sweep and one fact
+  insert per listing, which is right for every close that happens today (one
+  listing, or the handful of a player's active ones). The retention job walks
+  every overdue listing in the database, so if the volume grows it must call
+  the same close in pages — chunked transactions — instead of one row at a
+  time: the single door stays, the cost per transaction changes.
 - **The facts outlive their subjects.** `listing_outcomes` has NO foreign key
   on the listing (the fact must outlive the row the retention job deletes) and
   a nullable `character_id` with `ON DELETE SET NULL` (the fact must outlive
@@ -669,6 +705,14 @@ A daily job marks overdue ACTIVE listings EXPIRED, writes their fact, and
 deletes the CANCELLED/EXPIRED rows whose `expires_at` is older than 30 days.
 The board is already correct without it (the query filters overdue rows out),
 so this is hygiene, not a correctness blocker.
+
+It must close through `ListingCloser`, so every listing it expires writes its
+fact and cancels its pending requests. Today `close` works one entity at a
+time, which is fine for the handful of rows a publication or a group touches;
+the job walks the whole table. Start simple (one transaction per page of
+listings, reusing `close`), and if the volume grows, page over the overdue ids
+and keep chunking transactions — the single door does not change, only how
+many rows travel through it per commit.
 
 ## Error strategy (decided before the application layer)
 

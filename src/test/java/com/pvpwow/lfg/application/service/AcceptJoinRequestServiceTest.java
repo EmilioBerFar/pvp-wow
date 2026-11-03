@@ -196,6 +196,24 @@ class AcceptJoinRequestServiceTest {
                 .isEqualTo(JoinRequestStatus.CANCELLED);
     }
 
+    @Test
+    void acceptingCancelsEveryPendingRequestOfTheOwnersPlayerToo() {
+        LfgListing ownerListing = publish(OWNER_CHARACTER);
+        LfgListing otherListing = publish(OWNER_CHARACTER, Bracket.TWO_VS_TWO);
+        lifecycle.storeListing(ownerListing);
+        lifecycle.storeListing(otherListing);
+        JoinRequest accepted = pendingRequest(REQUESTER_CHARACTER, ownerListing);
+        // The owner was asking to join somebody else's listing: that request
+        // is irrelevant now, because the owner is playing too.
+        JoinRequest ownersOwn = pendingRequest(OWNER_CHARACTER, otherListing);
+
+        service.accept(accepted.id());
+
+        assertThat(ownersOwn.status())
+                .as("the owner starts playing as well")
+                .isEqualTo(JoinRequestStatus.CANCELLED);
+    }
+
     private JoinRequest pendingRequest(CharacterId requester, LfgListing listing) {
         JoinRequest request = JoinRequest.request(requester, listing.id(), NOW,
                 listing.expiresAt());
@@ -291,6 +309,7 @@ class AcceptJoinRequestServiceTest {
         @Override
         public List<ListingOutcome> completeGroup(JoinRequest acceptedRequest,
                                                   CharacterId ownerId, CharacterId requesterId,
+                                                  PlayerId ownerPlayerId,
                                                   PlayerId requesterOwnerId, Instant now) {
             for (CharacterId characterId : List.of(ownerId, requesterId)) {
                 for (LfgListing listing : listings.values()) {
@@ -305,9 +324,12 @@ class AcceptJoinRequestServiceTest {
                     }
                 }
             }
+            // Both players are playing: every pending request of either of
+            // them is irrelevant now.
             for (JoinRequest request : requests) {
                 if (request != acceptedRequest && request.isPending()
-                        && request.requesterId().equals(requesterId)) {
+                        && (request.requesterId().equals(requesterId)
+                        || request.requesterId().equals(ownerId))) {
                     request.cancel();
                 }
             }
@@ -347,7 +369,12 @@ class AcceptJoinRequestServiceTest {
         }
 
         @Override
-        public int pendingRequestCount(PlayerId ownerId) {
+        public int pendingRequestCount(PlayerId ownerId, Instant now) {
+            return 0;
+        }
+
+        @Override
+        public int expirePendingRequests(Instant now) {
             return 0;
         }
     }

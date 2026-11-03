@@ -302,6 +302,7 @@ class GroupFlowControllerTest {
         @Override
         public List<ListingOutcome> completeGroup(JoinRequest acceptedRequest,
                                                   CharacterId ownerId, CharacterId requesterId,
+                                                  PlayerId ownerPlayerId,
                                                   PlayerId requesterOwnerId, Instant now) {
             acceptedRequest.accept();
             return List.of();
@@ -341,7 +342,12 @@ class GroupFlowControllerTest {
         }
 
         @Override
-        public int pendingRequestCount(PlayerId ownerId) {
+        public int pendingRequestCount(PlayerId ownerId, Instant now) {
+            return 0;
+        }
+
+        @Override
+        public int expirePendingRequests(Instant now) {
             return 0;
         }
     }

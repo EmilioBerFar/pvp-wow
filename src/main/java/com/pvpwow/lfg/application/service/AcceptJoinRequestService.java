@@ -72,7 +72,8 @@ public final class AcceptJoinRequestService implements AcceptJoinRequest {
         }
 
         Instant now = clock.instant();
-        lifecycle.completeGroup(request, owner.id(), requester.id(), requester.ownerId(), now);
+        lifecycle.completeGroup(request, owner.id(), requester.id(),
+                owner.ownerId(), requester.ownerId(), now);
         // The aggregate's transition is persisted by the adapter, in the same
         // transaction as the closing of the listings and their facts.
     }

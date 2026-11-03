@@ -149,6 +149,27 @@ class RequestToJoinServiceTest {
                 .hasMessageContaining("pending requests (the limit is 3)");
     }
 
+    @Test
+    void requestsThatOutlivedTheirListingDoNotCountTowardsTheLimit() {
+        characters.store(character(REQUESTER, REQUESTER_OWNER));
+        for (int i = 0; i < 3; i++) {
+            LfgListing listing = publish(OWNER);
+            lifecycle.storeListing(listing);
+            service.request(new RequestToJoinCommand(REQUESTER, listing.id()));
+            // The listing dies, so the request waiting for an answer to it is
+            // expired by definition: it must not keep the slot.
+            lifecycle.expireRequest(listing.id());
+        }
+        LfgListing fourth = publish(OWNER);
+        lifecycle.storeListing(fourth);
+
+        service.request(new RequestToJoinCommand(REQUESTER, fourth.id()));
+
+        assertThat(lifecycle.requests())
+                .as("three dead requests are not three live requests")
+                .hasSize(4);
+    }
+
     private LfgListing publish(CharacterId characterId) {
         return LfgListing.publish(characterId, com.pvpwow.lfg.domain.character.Bracket.THREE_VS_THREE,
                 Specialization.MAGE_FROST, Set.of(com.pvpwow.lfg.domain.listing.Language.ES),
@@ -198,7 +219,6 @@ class RequestToJoinServiceTest {
 
         private final Map<ListingId, LfgListing> listings = new java.util.HashMap<>();
         private final List<JoinRequest> requests = new ArrayList<>();
-        private int pendingCount;
 
         void storeListing(LfgListing listing) {
             listings.put(listing.id(), listing);
@@ -210,10 +230,23 @@ class RequestToJoinServiceTest {
             listings.put(listingId, listing);
         }
 
+        /**
+         * The listing dies, so the request waiting for an answer to it is
+         * expired by definition.
+         */
+        void expireRequest(ListingId listingId) {
+            requests.stream()
+                    .filter(request -> request.listingId().equals(listingId))
+                    .forEach(request -> request.expireIfDue(NOW.plus(Duration.ofHours(25))));
+        }
+
         void reset() {
             listings.clear();
             requests.clear();
-            pendingCount = 0;
+        }
+
+        List<JoinRequest> requests() {
+            return List.copyOf(requests);
         }
 
         JoinRequest onlyRequest() {
@@ -224,7 +257,7 @@ class RequestToJoinServiceTest {
         @Override
         public List<com.pvpwow.lfg.domain.listing.ListingOutcome> completeGroup(
                 JoinRequest acceptedRequest, CharacterId ownerId, CharacterId requesterId,
-                PlayerId requesterOwnerId, Instant now) {
+                PlayerId ownerPlayerId, PlayerId requesterOwnerId, Instant now) {
             throw new AssertionError("asking must not close anything");
         }
 
@@ -253,7 +286,6 @@ class RequestToJoinServiceTest {
         @Override
         public void save(JoinRequest request) {
             requests.add(request);
-            pendingCount++;
         }
 
         @Override
@@ -265,8 +297,23 @@ class RequestToJoinServiceTest {
         }
 
         @Override
-        public int pendingRequestCount(PlayerId ownerId) {
-            return pendingCount;
+        public int pendingRequestCount(PlayerId ownerId, Instant now) {
+            return (int) requests.stream()
+                    .filter(JoinRequest::isPending)
+                    .filter(request -> request.expiresAt().isAfter(now))
+                    .count();
+        }
+
+        @Override
+        public int expirePendingRequests(Instant now) {
+            int expired = 0;
+            for (JoinRequest request : requests) {
+                if (request.isPending() && !request.expiresAt().isAfter(now)
+                        && request.expireIfDue(now)) {
+                    expired++;
+                }
+            }
+            return expired;
         }
     }
 }

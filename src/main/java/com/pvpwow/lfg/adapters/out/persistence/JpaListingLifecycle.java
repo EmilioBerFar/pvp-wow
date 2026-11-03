@@ -36,32 +36,30 @@ import java.util.UUID;
  * waiting for an answer he no longer needs. {@code @Transactional} cannot
  * proxy this final class, so the transaction is explicit.
  *
- * <p>WHY SQL AND NOT JPA FOR THE CLOSE: the close is a set-based UPDATE
- * ("every ACTIVE listing of these two characters") and the facts are an
- * INSERT...SELECT of the same rows. In JPQL that is two round trips with a
- * re-read in between; in SQL it is one statement per table and the row set
- * is exactly the one the UPDATE touched.
+ * <p>NO LISTING IS CLOSED HERE. Every close goes through {@link ListingCloser},
+ * which always writes the fact and cancels the pending requests. This class
+ * owns the transaction and the join-request bookkeeping around it.
  */
 @Component
 final class JpaListingLifecycle implements ListingLifecycle {
 
     private final ListingJpaRepository listings;
     private final JoinRequestJpaRepository joinRequests;
-    private final ListingOutcomeJpaRepository outcomes;
     private final CharacterJpaRepository characterRepository;
+    private final ListingCloser closer;
     private final EntityManager entityManager;
     private final TransactionTemplate transactions;
 
     JpaListingLifecycle(ListingJpaRepository listings,
                          JoinRequestJpaRepository joinRequests,
-                         ListingOutcomeJpaRepository outcomes,
                          CharacterJpaRepository characterRepository,
+                         ListingCloser closer,
                          EntityManager entityManager,
                          PlatformTransactionManager transactionManager) {
         this.listings = listings;
         this.joinRequests = joinRequests;
-        this.outcomes = outcomes;
         this.characterRepository = characterRepository;
+        this.closer = closer;
         this.entityManager = entityManager;
         this.transactions = new TransactionTemplate(transactionManager);
     }
@@ -70,6 +68,7 @@ final class JpaListingLifecycle implements ListingLifecycle {
     public List<ListingOutcome> completeGroup(JoinRequest acceptedRequest,
                                                CharacterId ownerId,
                                                CharacterId requesterId,
+                                               PlayerId ownerPlayerId,
                                                PlayerId requesterOwnerId,
                                                Instant now) {
         Objects.requireNonNull(acceptedRequest, "acceptedRequest must not be null");
@@ -77,11 +76,15 @@ final class JpaListingLifecycle implements ListingLifecycle {
             List<ListingOutcome> closed = new ArrayList<>();
 
             for (CharacterId characterId : List.of(ownerId, requesterId)) {
-                closed.addAll(closeActiveListings(characterId, ListingOutcomeKind.COMPLETED, now));
+                closed.addAll(closer.closeAllOf(characterId, ListingStatus.COMPLETED,
+                        ListingOutcomeKind.COMPLETED, now));
             }
 
-            // The requester is playing: every request still waiting for an
-            // answer is cancelled, whichever character sent it.
+            // BOTH players are playing now, so every request either of them
+            // was waiting for is irrelevant: the owner's and the requester's,
+            // whichever character sent them.
+            joinRequests.cancelPending(ownerPlayerId.value(),
+                    JoinRequestStatus.PENDING, JoinRequestStatus.CANCELLED);
             joinRequests.cancelPending(requesterOwnerId.value(),
                     JoinRequestStatus.PENDING, JoinRequestStatus.CANCELLED);
 
@@ -104,11 +107,9 @@ final class JpaListingLifecycle implements ListingLifecycle {
                         "Only an ACTIVE listing can be withdrawn, current status: %s"
                                 .formatted(listing.status()));
             }
-            listing.setStatus(ListingStatus.CANCELLED);
-            entityManager.merge(listing);
-            ListingOutcome outcome = outcomeOf(listing, ListingOutcomeKind.CANCELLED, now);
-            outcomes.save(ListingOutcomeMapper.toEntity(outcome));
-            return outcome;
+            // The shared closer: fact + pending requests, in one place.
+            return closer.close(listing, ListingStatus.CANCELLED,
+                    ListingOutcomeKind.CANCELLED, now);
         });
     }
 
@@ -121,11 +122,9 @@ final class JpaListingLifecycle implements ListingLifecycle {
                         "Only an ACTIVE listing can expire, current status: %s"
                                 .formatted(listing.status()));
             }
-            listing.setStatus(ListingStatus.EXPIRED);
-            entityManager.merge(listing);
-            ListingOutcome outcome = outcomeOf(listing, ListingOutcomeKind.EXPIRED, now);
-            outcomes.save(ListingOutcomeMapper.toEntity(outcome));
-            return outcome;
+            // The shared closer: fact + pending requests, in one place.
+            return closer.close(listing, ListingStatus.EXPIRED,
+                    ListingOutcomeKind.EXPIRED, now);
         });
     }
 
@@ -161,55 +160,21 @@ final class JpaListingLifecycle implements ListingLifecycle {
     }
 
     @Override
-    public int pendingRequestCount(PlayerId ownerId) {
-        return joinRequests.countPending(ownerId.value(), JoinRequestStatus.PENDING);
+    public int pendingRequestCount(PlayerId ownerId, Instant now) {
+        return joinRequests.countPending(ownerId.value(), JoinRequestStatus.PENDING, now);
     }
 
-    /**
-     * Closes every ACTIVE listing of a character and writes one fact per
-     * closed listing. The listing set is read first and then closed one by
-     * one, so the facts and the statuses can never disagree.
-     *
-     * <p>The entities are FLUSHED before the facts are written, because the
-     * facts carry the listing's bracket and spec: they must be read from the
-     * database, not from a stale persistence context.
-     */
-    private List<ListingOutcome> closeActiveListings(CharacterId characterId,
-                                                     ListingOutcomeKind kind,
-                                                     Instant now) {
-        List<ListingEntity> active = listings.findByCharacterIdAndStatus(
-                characterId.value(), ListingStatus.ACTIVE);
-        for (ListingEntity listing : active) {
-            listing.setStatus(ListingStatus.COMPLETED);
-            entityManager.merge(listing);
-        }
-        entityManager.flush();
-
-        List<ListingOutcome> closed = new ArrayList<>(active.size());
-        for (ListingEntity listing : active) {
-            ListingOutcome outcome = outcomeOf(listing, kind, now);
-            outcomes.save(ListingOutcomeMapper.toEntity(outcome));
-            closed.add(outcome);
-        }
-        return closed;
+    @Override
+    public int expirePendingRequests(Instant now) {
+        return transactions.execute(status ->
+                joinRequests.expirePending(JoinRequestStatus.PENDING,
+                        JoinRequestStatus.EXPIRED, now));
     }
 
     private ListingEntity requireListing(ListingId listingId) {
         return listings.findById(listingId.value())
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Listing %s does not exist".formatted(listingId)));
-    }
-
-    private static ListingOutcome outcomeOf(ListingEntity listing, ListingOutcomeKind kind,
-                                             Instant now) {
-        return new ListingOutcome(
-                new ListingId(listing.id()),
-                new CharacterId(listing.character().id()),
-                listing.bracket(),
-                listing.spec(),
-                kind,
-                listing.createdAt(),
-                now);
     }
 
     private void persistJoinRequest(JoinRequest request) {

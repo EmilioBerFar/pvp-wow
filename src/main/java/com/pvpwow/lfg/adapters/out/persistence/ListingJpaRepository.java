@@ -3,7 +3,6 @@ package com.pvpwow.lfg.adapters.out.persistence;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.listing.ListingStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -21,25 +20,27 @@ interface ListingJpaRepository extends JpaRepository<ListingEntity, UUID> {
     List<ListingEntity> findByCharacterIdAndStatus(UUID characterId, ListingStatus status);
 
     /**
-     * Marks the character's due ACTIVE listings EXPIRED before a new one is
-     * inserted. PostgreSQL cannot use {@code now()} inside the partial unique
-     * index predicate, so this sweep is what keeps an overdue-but-ACTIVE row
-     * from blocking the slot forever.
+     * The ACTIVE listings of a character in one bracket that are already due.
+     * The sweep that frees the slot for a new publication uses it: those
+     * listings are closed THROUGH the shared closer, so they write their
+     * fact and cancel their pending requests like any other close.
+     *
+     * <p>Written in JPQL with an explicit comparison, because the derived
+     * name would read the expiration as "expiresAt LESS THAN" — the opposite
+     * of what a due listing is.
      */
-    @Modifying
     @Query("""
-            update ListingEntity l
-               set l.status = :expired
+            select l
+              from ListingEntity l
              where l.character.id = :characterId
                and l.bracket = :bracket
-               and l.status = :active
+               and l.status = :status
                and l.expiresAt <= :now
             """)
-    int expireDue(@Param("characterId") UUID characterId,
-                  @Param("bracket") Bracket bracket,
-                  @Param("active") ListingStatus active,
-                  @Param("expired") ListingStatus expired,
-                  @Param("now") Instant now);
+    List<ListingEntity> findDue(@Param("characterId") UUID characterId,
+                                 @Param("bracket") Bracket bracket,
+                                 @Param("status") ListingStatus status,
+                                 @Param("now") Instant now);
 
     /**
      * The advisory duplicate check. "Active" here means ACTIVE and not yet due:

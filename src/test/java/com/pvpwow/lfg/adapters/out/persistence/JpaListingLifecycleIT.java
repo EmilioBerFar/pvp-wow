@@ -105,7 +105,7 @@ class JpaListingLifecycleIT {
         JoinRequest request = pendingRequest(requester.id(), ownerListing, OWNER);
 
         List<ListingOutcome> facts = lifecycle.completeGroup(request, owner.id(),
-                requester.id(), REQUESTER_OWNER, NOW);
+                requester.id(), OWNER, REQUESTER_OWNER, NOW);
 
         assertThat(facts).hasSize(2);
         assertThat(statusOf(ownerListing.id())).isEqualTo("COMPLETED");
@@ -125,7 +125,7 @@ class JpaListingLifecycleIT {
         publish(requester, Bracket.THREE_VS_THREE);
         JoinRequest request = pendingRequest(requester.id(), threeVThree, OWNER);
 
-        lifecycle.completeGroup(request, owner.id(), requester.id(), REQUESTER_OWNER, NOW);
+        lifecycle.completeGroup(request, owner.id(), requester.id(), OWNER, REQUESTER_OWNER, NOW);
 
         assertThat(statusOf(threeVThree.id())).isEqualTo("COMPLETED");
         assertThat(statusOf(twoVTwo.id())).isEqualTo("COMPLETED");
@@ -141,12 +141,102 @@ class JpaListingLifecycleIT {
         JoinRequest accepted = pendingRequest(requester.id(), first, OWNER);
         JoinRequest other = pendingRequest(requester.id(), second, OWNER);
 
-        lifecycle.completeGroup(accepted, owner.id(), requester.id(), REQUESTER_OWNER, NOW);
+        lifecycle.completeGroup(accepted, owner.id(), requester.id(), OWNER, REQUESTER_OWNER, NOW);
 
         assertThat(statusOfRequest(accepted.id())).isEqualTo("ACCEPTED");
         assertThat(statusOfRequest(other.id()))
                 .as("starting to play closes every pending request of the player")
                 .isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void acceptingCancelsEveryPendingRequestOfTheOwnersPlayerToo() {
+        Character owner = savedCharacter("Frostbolt", OWNER);
+        Character requester = savedCharacter("Ember", REQUESTER_OWNER);
+        LfgListing ownerListing = publish(owner, Bracket.THREE_VS_THREE);
+        LfgListing otherListing = publish(owner, Bracket.TWO_VS_TWO);
+        JoinRequest accepted = pendingRequest(requester.id(), ownerListing, OWNER);
+        // The owner was asking to join somebody else's listing: it is
+        // irrelevant now, because the owner is playing too.
+        JoinRequest ownersOwn = pendingRequest(owner.id(), otherListing, OWNER);
+
+        lifecycle.completeGroup(accepted, owner.id(), requester.id(), OWNER, REQUESTER_OWNER, NOW);
+
+        assertThat(statusOfRequest(ownersOwn.id()))
+                .as("the owner starts playing as well")
+                .isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void thePendingRequestsAimedAtAClosedListingAreCancelled() {
+        Character owner = savedCharacter("Frostbolt", OWNER);
+        Character requester = savedCharacter("Ember", REQUESTER_OWNER);
+        Character stranger = savedCharacter("Shadow", new PlayerId(UUID.randomUUID()));
+        LfgListing ownerListing = publish(owner, Bracket.THREE_VS_THREE);
+        // Another player asked to join the same listing.
+        JoinRequest strangers = pendingRequest(stranger.id(), ownerListing, OWNER);
+
+        lifecycle.completeGroup(pendingRequest(requester.id(), ownerListing, OWNER),
+                owner.id(), requester.id(), OWNER, REQUESTER_OWNER, NOW);
+
+        assertThat(statusOfRequest(strangers.id()))
+                .as("the listing is gone, so the request waiting for an answer to it is too")
+                .isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void withdrawingAListingCancelsTheRequestsAimedAtIt() {
+        Character owner = savedCharacter("Frostbolt", OWNER);
+        Character stranger = savedCharacter("Shadow", new PlayerId(UUID.randomUUID()));
+        LfgListing listing = publish(owner, Bracket.THREE_VS_THREE);
+        JoinRequest request = pendingRequest(stranger.id(), listing, OWNER);
+
+        lifecycle.withdraw(listing.id(), owner.id(), NOW);
+
+        assertThat(statusOfRequest(request.id()))
+                .as("the player who asked must get their slot back")
+                .isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void expiringAListingCancelsTheRequestsAimedAtIt() {
+        Character owner = savedCharacter("Frostbolt", OWNER);
+        Character stranger = savedCharacter("Shadow", new PlayerId(UUID.randomUUID()));
+        LfgListing listing = publish(owner, Bracket.THREE_VS_THREE);
+        JoinRequest request = pendingRequest(stranger.id(), listing, OWNER);
+
+        lifecycle.expire(listing.id(), owner.id(), NOW);
+
+        assertThat(statusOfRequest(request.id()))
+                .as("a listing that died takes its pending requests with it")
+                .isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void thePendingRequestsThatOutlivedTheirListingDoNotCount() {
+        Character owner = savedCharacter("Frostbolt", OWNER);
+        Character requester = savedCharacter("Ember", REQUESTER_OWNER);
+        LfgListing listing = publish(owner, Bracket.THREE_VS_THREE);
+        pendingRequest(requester.id(), listing, OWNER);
+
+        assertThat(lifecycle.pendingRequestCount(REQUESTER_OWNER, NOW))
+                .as("the request is still alive")
+                .isEqualTo(1);
+        assertThat(lifecycle.pendingRequestCount(REQUESTER_OWNER, NOW.plus(Duration.ofHours(25))))
+                .as("the listing died, so the request is expired by definition")
+                .isEqualTo(0);
+    }
+
+    @Test
+    void theRetentionJobMarksTheDeadPendingRequestsAsExpired() {
+        Character owner = savedCharacter("Frostbolt", OWNER);
+        Character requester = savedCharacter("Ember", REQUESTER_OWNER);
+        LfgListing listing = publish(owner, Bracket.THREE_VS_THREE);
+        JoinRequest request = pendingRequest(requester.id(), listing, OWNER);
+
+        assertThat(lifecycle.expirePendingRequests(NOW.plus(Duration.ofHours(25))))
+                .isEqualTo(1);
+        assertThat(statusOfRequest(request.id())).isEqualTo("EXPIRED");
     }
 
     @Test
@@ -158,7 +248,7 @@ class JpaListingLifecycleIT {
         LfgListing strangerListing = publish(stranger, Bracket.THREE_VS_THREE);
         JoinRequest request = pendingRequest(requester.id(), ownerListing, OWNER);
 
-        lifecycle.completeGroup(request, owner.id(), requester.id(), REQUESTER_OWNER, NOW);
+        lifecycle.completeGroup(request, owner.id(), requester.id(), OWNER, REQUESTER_OWNER, NOW);
 
         assertThat(statusOf(strangerListing.id())).isEqualTo("ACTIVE");
         assertThat(countIn("listing_outcomes")).isEqualTo(1);
@@ -171,7 +261,7 @@ class JpaListingLifecycleIT {
         LfgListing ownerListing = publish(owner, Bracket.THREE_VS_THREE);
         JoinRequest request = pendingRequest(requester.id(), ownerListing, OWNER);
 
-        lifecycle.completeGroup(request, owner.id(), requester.id(), REQUESTER_OWNER, NOW);
+        lifecycle.completeGroup(request, owner.id(), requester.id(), OWNER, REQUESTER_OWNER, NOW);
 
         jdbc.update("delete from characters where id = ?", owner.id().value());
 
