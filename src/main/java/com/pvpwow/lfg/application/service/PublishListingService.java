@@ -24,13 +24,6 @@ import java.util.Objects;
  */
 public final class PublishListingService implements PublishListing {
 
-    /**
-     * One message for an unknown character and for a character owned by
-     * somebody else. Distinguishing them would let a caller enumerate other
-     * players' characters (OWASP anti-enumeration).
-     */
-    private static final String CHARACTER_NOT_FOUND = "Character not found";
-
     private final Characters characters;
     private final Listings listings;
     private final CurrentPlayerProvider currentPlayer;
@@ -51,11 +44,11 @@ public final class PublishListingService implements PublishListing {
     public ListingId publish(PublishListingCommand command) {
         PlayerId caller = currentPlayer.currentPlayer();
         Character character = characters.findById(command.characterId())
-                .orElseThrow(() -> new ResourceNotFoundException(CHARACTER_NOT_FOUND));
+                .orElseThrow(ResourceNotFoundException::characterNotFound);
 
         if (!character.ownerId().equals(caller)) {
             // Same message and status as an absent id, on purpose.
-            throw new ResourceNotFoundException(CHARACTER_NOT_FOUND);
+            throw ResourceNotFoundException.characterNotFound();
         }
         if (!character.plays(command.spec())) {
             throw new DomainRuleViolationException(
