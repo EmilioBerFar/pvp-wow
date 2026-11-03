@@ -81,6 +81,15 @@ final class ApiErrorHandling {
         return problem;
     }
 
+    @ExceptionHandler(MalformedIdentifierException.class)
+    ProblemDetail malformedIdentifier(MalformedIdentifierException malformed) {
+        log.debug("Rejected a malformed identifier");
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, malformed.getMessage());
+        problem.setTitle("Malformed request");
+        return problem;
+    }
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     ProblemDetail malformedBody(HttpMessageNotReadableException malformed) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(

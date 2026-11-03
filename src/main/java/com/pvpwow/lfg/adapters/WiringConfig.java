@@ -1,18 +1,29 @@
 package com.pvpwow.lfg.adapters;
 
+import com.pvpwow.lfg.application.port.in.AcceptJoinRequest;
 import com.pvpwow.lfg.application.port.in.GetCharacter;
 import com.pvpwow.lfg.application.port.in.PublishListing;
 import com.pvpwow.lfg.application.port.in.RegisterCharacter;
+import com.pvpwow.lfg.application.port.in.RejectJoinRequest;
+import com.pvpwow.lfg.application.port.in.RequestToJoin;
 import com.pvpwow.lfg.application.port.in.SearchBoard;
+import com.pvpwow.lfg.application.port.in.WithdrawJoinRequest;
+import com.pvpwow.lfg.application.port.in.WithdrawListing;
 import com.pvpwow.lfg.application.port.out.BoardListings;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.CurrentPlayerProvider;
+import com.pvpwow.lfg.application.port.out.ListingLifecycle;
 import com.pvpwow.lfg.application.port.out.Listings;
 import com.pvpwow.lfg.application.port.out.Seasons;
+import com.pvpwow.lfg.application.service.AcceptJoinRequestService;
 import com.pvpwow.lfg.application.service.GetCharacterService;
 import com.pvpwow.lfg.application.service.PublishListingService;
 import com.pvpwow.lfg.application.service.RegisterCharacterService;
+import com.pvpwow.lfg.application.service.RejectJoinRequestService;
+import com.pvpwow.lfg.application.service.RequestToJoinService;
 import com.pvpwow.lfg.application.service.SearchBoardService;
+import com.pvpwow.lfg.application.service.WithdrawJoinRequestService;
+import com.pvpwow.lfg.application.service.WithdrawListingService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -65,5 +76,35 @@ public class WiringConfig {
     @Bean
     SearchBoard searchBoard(BoardListings boardListings, Seasons seasons, Clock clock) {
         return new SearchBoardService(boardListings, seasons, clock);
+    }
+
+    @Bean
+    RequestToJoin requestToJoin(Characters characters, ListingLifecycle lifecycle,
+                                CurrentPlayerProvider currentPlayer, Clock clock) {
+        return new RequestToJoinService(characters, lifecycle, currentPlayer, clock);
+    }
+
+    @Bean
+    AcceptJoinRequest acceptJoinRequest(Characters characters, ListingLifecycle lifecycle,
+                                        CurrentPlayerProvider currentPlayer, Clock clock) {
+        return new AcceptJoinRequestService(characters, lifecycle, currentPlayer, clock);
+    }
+
+    @Bean
+    RejectJoinRequest rejectJoinRequest(Characters characters, ListingLifecycle lifecycle,
+                                        CurrentPlayerProvider currentPlayer) {
+        return new RejectJoinRequestService(characters, lifecycle, currentPlayer);
+    }
+
+    @Bean
+    WithdrawJoinRequest withdrawJoinRequest(Characters characters, ListingLifecycle lifecycle,
+                                            CurrentPlayerProvider currentPlayer) {
+        return new WithdrawJoinRequestService(characters, lifecycle, currentPlayer);
+    }
+
+    @Bean
+    WithdrawListing withdrawListing(Characters characters, ListingLifecycle lifecycle,
+                                    CurrentPlayerProvider currentPlayer, Clock clock) {
+        return new WithdrawListingService(characters, lifecycle, currentPlayer, clock);
     }
 }

@@ -589,6 +589,87 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   of other players' characters — that last one is a product decision, not an
   oversight.
 
+## WU15 — The group handshake (JoinRequest) and the facts of a finished listing
+
+| Piece | Package | Content |
+|---|---|---|
+| Aggregate | `domain.join` | `JoinRequest` — requester, listing, status, createdAt, expiresAt |
+| Status | `domain.listing` | `ListingStatus.COMPLETED`; `LfgListing.complete()` |
+| Fact | `domain.listing` | `ListingOutcome` + `ListingOutcomeKind` — what a finished listing was |
+| Driving ports | `application.port.in` | `RequestToJoin`, `AcceptJoinRequest`, `RejectJoinRequest`, `WithdrawJoinRequest`, `WithdrawListing` |
+| Driven port | `application.port.out` | `ListingLifecycle` — the atomic close, the facts and the request sweep |
+| Migration | `db/migration` | `V3__create_join_requests_and_listing_outcomes.sql` |
+| Endpoints | `adapters.in.rest` | request / accept / reject / withdraw a request; withdraw a listing |
+
+- **The handshake is not bureaucracy — it is what makes COMPLETED mean
+  something (user decision).** Accepting unilaterally would close the owner's
+  listings without their consent, which lets anybody empty the board on
+  purpose and forge successes. A group forms only when BOTH sides agreed, so
+  the success rate is defensible.
+- **A request LIVES AS LONG AS THE LISTING.** `expiresAt` is the listing's own
+  expiration, copied at creation: no separate TTL, no separate configuration.
+  A request to join a listing that dies in three hours dies with it, and the
+  request's EXPIRED state and the listing's EXPIRED state are the same instant.
+- **There is no "I found a group" button (user decision).** It cannot be
+  verified and it can be abused to forge successes. COMPLETED is reachable
+  ONLY through an accepted request.
+- **Accepting closes EVERY active listing of BOTH players**, in every bracket,
+  and writes one fact per closed listing — in ONE transaction, with the
+  request marked ACCEPTED. Half a group is worse than no group, and facts
+  that disagree with the listings would poison the metrics. Nothing else
+  closes: the listings of a third party are untouched, and there is a test
+  for exactly that.
+- **The owner may not accept their own request (user decision).** It would not
+  form a group and it would forge a success: 422, not "close it once".
+- **Only the owner may accept or reject; only the requester may withdraw.**
+  Anybody else gets the same 404 as for a request that does not exist, because
+  the answer must not reveal that it does. A request that is not PENDING is a
+  422: the transition already happened.
+- **REJECTED and CANCELLED are different facts.** The owner refused and the
+  requester gave up are not the same event, and the metrics must tell them
+  apart. Withdrawing is not rejecting.
+- **`owner_id` is denormalized on `join_requests`, on purpose.** Two rules are
+  about the PLAYER, not the character: a player cannot request the same
+  listing twice (not even with another character) and a player cannot hold
+  more than **3** pending requests. Both are laws of the database:
+  `ux_join_requests_pending_per_player_listing` for the first, an application
+  check for the second.
+- **Why 3 pending requests, and not 1.** A single global pending request
+  blocks a player who found no answer for the whole life of the listing (24
+  hours). Three keeps the queue short without stranding anybody.
+- **Starting to play cancels every pending request of the PLAYER** (not just
+  of the character that was accepted), in the same transaction as the close.
+  It is the same rule as "starting to play closes all your listings", applied
+  to the requests still waiting for an answer.
+- **The facts outlive their subjects.** `listing_outcomes` has NO foreign key
+  on the listing (the fact must outlive the row the retention job deletes) and
+  a nullable `character_id` with `ON DELETE SET NULL` (the fact must outlive
+  the player). The metrics read the facts, never the listings.
+- **The success rate is CONSERVATIVE (user decision).** It counts only the
+  groups formed inside the app, so it under-reports: groups formed outside
+  the app are invisible. It will be revisited with real data.
+- **The 3v3 simplification (user decision).** In 3v3 the listing means "one
+  player is missing", but the FIRST acceptance closes the search: the group of
+  three is formed out of the app, in voice chat. There is no Group entity and
+  no lobby yet.
+- **Tests.** `JoinRequestTest` covers the aggregate (one-shot transitions,
+  expiry at the exact instant). `RequestToJoinServiceTest` covers your own
+  listing (422), absent vs foreign character (the same 404), a closed
+  listing, the duplicate request and the limit of three.
+  `AcceptJoinRequestServiceTest` covers the two rules that protect COMPLETED
+  (own listing → 422, not the owner → 404), the close of both players, the
+  player without a listing, the third party that is NOT touched and the
+  cancellation of the requester's pending requests. `JpaListingLifecycleIT`
+  proves the same against real PostgreSQL, including that a fact survives the
+  deletion of its character.
+
+## WU16 — The retention sweep (still to come)
+
+A daily job marks overdue ACTIVE listings EXPIRED, writes their fact, and
+deletes the CANCELLED/EXPIRED rows whose `expires_at` is older than 30 days.
+The board is already correct without it (the query filters overdue rows out),
+so this is hygiene, not a correctness blocker.
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
@@ -644,14 +725,15 @@ own steps: the Blizzard API client (sync step), real auth beyond the
 ## Next step
 
 WU12 (REST exposure, keyset pagination, bean wiring and the configured TTL),
-WU13 (read your own character, with total anti-enumeration) and WU14 (declared
-presence + a blank generic 500) are done.
+WU13 (read your own character, with total anti-enumeration), WU14 (declared
+presence + a blank generic 500) and WU15 (the group handshake and the facts
+of a finished listing) are done.
 
-Next: WU15 — the retention sweep. A daily job marks overdue ACTIVE listings
-EXPIRED and deletes CANCELLED/EXPIRED rows older than 30 days. The board is
-already correct without it (the query filters overdue rows out), so this is
-hygiene, not a correctness blocker.
+Next: WU16 — the retention sweep. A daily job marks overdue ACTIVE listings
+EXPIRED, writes their EXPIRED fact and deletes the CANCELLED/EXPIRED rows
+whose `expires_at` is older than 30 days. The board is already correct
+without it (the query filters overdue rows out), so this is hygiene, not a
+correctness blocker.
 
-Still open afterwards: the group-completion flow (bulk close of the player's
-listings, whether they close their own or accept an invitation) and a listing
-read-by-id resource.
+Still open afterwards: the lobby with chat (it needs a Group entity, which
+does not exist yet) and a listing read-by-id resource.

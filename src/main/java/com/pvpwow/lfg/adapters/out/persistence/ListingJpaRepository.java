@@ -8,9 +8,17 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 interface ListingJpaRepository extends JpaRepository<ListingEntity, UUID> {
+
+    /**
+     * The ACTIVE listings of a character, in every bracket. Used by the group
+     * completion: accepting a join request closes EVERY active listing of both
+     * players, not just the one the request pointed at.
+     */
+    List<ListingEntity> findByCharacterIdAndStatus(UUID characterId, ListingStatus status);
 
     /**
      * Marks the character's due ACTIVE listings EXPIRED before a new one is
