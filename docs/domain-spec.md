@@ -408,6 +408,187 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   character's due rows for the bracket it touches, but every other overdue row
   stays ACTIVE until then, so the sweep is required before the board is public.
 
+## WU12 — Expose the board and the publication flow (REST + wiring + paging)
+
+| Piece | Package | Content |
+|---|---|---|
+| Board read port | `application.port.out` | `BoardListings` now takes a `BoardCursor` and a `limit`, and returns a `BoardSlice` (`candidates`, `hasMore`) instead of an unbounded list |
+| Search driving port | `application.port.in` | `SearchBoardQuery` gains `cursor` and `limit`; `BoardPage(entries, nextCursor)` is the new result. `DEFAULT_PAGE_SIZE = 20`, `MAX_PAGE_SIZE = 50` |
+| Search service | `application.service` | `SearchBoardService` translates the cursor between the two port vocabularies and anchors the next one on the last returned entry |
+| Read adapter | `adapters.out.persistence` | `JdbcBoardListings` adds the keyset predicate and `limit + 1` detection |
+| Publish endpoint | `adapters.in.rest` | `POST /api/listings` → `201` + `{id}` |
+| Board endpoint | `adapters.in.rest` | `GET /api/board` → `200` + `{items, nextCursor}` |
+| Request DTO | `adapters.in.rest` | `PublishListingRequest` with nested schedule/window records; no TTL field exists. Presence is declared with Bean Validation |
+| Response DTO | `adapters.in.rest` | `BoardPageResponse` — a deliberate projection of `BoardPage` |
+| Cursor codec | `adapters.in.rest` | `BoardCursorCodec` — versioned, opaque, base64url |
+| Wire conventions | `adapters.in.rest` | `WireParsing` — one home for `required`, enum parsing, friendly brackets, ISO times and zone ids |
+| Wiring | `adapters` | `WiringConfig` exposes `PublishListing` and `SearchBoard`; `pvp.listing-ttl` is validated fail-fast |
+
+- **Keyset pagination, never offset (user decision).** The cursor is the
+  `(createdAt, id)` pair of the last row of the previous page — the same
+  composite order the board already used. SQL compares it as a row value,
+  `(l.created_at, l.id) < (:cursorCreatedAt, :cursorListingId)`, which
+  PostgreSQL turns into one index range on `ix_lfg_listings_board`. Two OR'd
+  conditions would not use the index the same way. The query fetches
+  `limit + 1` rows: the extra row answers "is there another page?" without a
+  count query, and it is never hydrated or returned.
+- **The tie-break is the database's, not Java's.** `order by l.created_at desc,
+  l.id desc` and the cursor comparison both happen in PostgreSQL, so UUID
+  ordering is consistent. Nothing re-sorts the page in Java — Java's
+  `UUID.compareTo` is NOT PostgreSQL's uuid order.
+- **Presence is DECLARED, not remembered (user decision).** Bean Validation
+  owns presence and nothing else: `@NotNull`, `@NotBlank`, `@NotEmpty`,
+  `@Valid` in cascade, and `List<@NotNull @Valid ...>` for list elements. The
+  rationale is a threat model, not a preference: the input is hostile by
+  default, and a developer who adds a field to a DTO must not have to
+  remember to guard it by hand. A missing field is a 422, never a 500.
+- **Format and business rules did NOT move.** `WireParsing` still parses
+  (friendly brackets, case-insensitive enums, ISO times, zone ids) and the
+  domain value objects still validate what they are. Two mechanisms for two
+  different jobs, never three for one. The annotation vocabulary says
+  "this must be here"; the value object says "this must be correct".
+- **The 422 wording is built from the violation PATH, not from the message
+  bundle.** Hibernate Validator's default messages come from a resource
+  bundle, and that bundle follows the JVM's locale: a Spanish server would
+  answer a Spanish error to an English API. The advice builds
+  `<path> is required` itself, so the answer is the same everywhere. The path
+  keeps the nested structure: `schedule.windows[0].day is required`.
+- **The one optional field is deliberate.** `ratings` may be absent (a
+  character may be registered unranked); its CONTENTS are constrained when
+  present. Every other field of both DTOs is required.
+- **The declaration is a test.** `everyFieldOfTheRequestIsDeclaredRequired`
+  walks the record's fields and their presence constraints (including the type
+  arguments of collections), so a field added without an annotation fails the
+  suite instead of production. `aMissingRequiredFieldIsA422` keeps one
+  parameterized case per required field: a JSON null binds exactly like an
+  absent field, so each case proves both.
+- **A missing required field is a 422, never an NPE — for EVERY field.** This
+  covers nested objects (`schedule`, `zone`, `windows`) and null ENTRIES inside
+  an array (`windows: [null]`, `specs: [null]`), not just top-level fields.
+- **The cursor is opaque (user decision).** Versioned `1|instant|uuid`,
+  base64url without padding, encoded and decoded only in the REST adapter. The
+  client echoes it, it never composes one, so the cursor shape can change
+  without breaking callers. The application layer never sees base64.
+- **Each port owns its own cursor vocabulary.** `SearchBoard.BoardCursor` and
+  `BoardListings.BoardCursor` are two records with the same shape; the service
+  translates. Neither port imports the other just to save a mapping.
+- **Error semantics are split by audience.** Missing `region`/`bracket` is
+  Spring's own 400 (a binding failure). A cursor this API did not issue is a
+  `MalformedCursorException` → 400: it is a wire artifact, not a business rule.
+  Unknown enums, a negative rating and an out-of-range limit stay 422, because
+  those are invalid values the caller can correct. The `limit` bound is also
+  enforced inside `SearchBoardQuery`, so a future adapter that forgets to
+  validate gets a loud failure instead of an unbounded query.
+- **201 carries the id and NO `Location`.** There is no read-by-id resource, so
+  a Location header would point at a 404. **Pre-existing debt, not fixed here:**
+  `POST /api/characters` (WU8) already returns `Location: /api/characters/{id}`
+  with no such endpoint. It is removed when that read resource exists, or the
+  header is dropped there too.
+- **The board response is a projection, not an aggregate dump.** It carries the
+  pinned spec, languages, sorted availability windows, `createdAt`/`expiresAt`,
+  and the character summary with gear and rating evidence for THE QUERIED
+  bracket only. `ownerId` is deliberately absent: the board is public and the
+  owner's identity is not needed to answer "who is available". Stale evidence
+  is still sent, flagged `ratingStale`/`gearStale`; unranked means a null
+  rating and no staleness. Collections are sorted so the same board always
+  serializes identically.
+- **TTL is configuration, not input.** `pvp.listing-ttl: PT24H` feeds
+  `PublishListingService` through the composition root. Zero or negative fails
+  the boot — a misconfiguration must not become listings that are born due.
+- **Exposing the board does NOT require the retention sweep for correctness.**
+  The query filters `status='ACTIVE' and expires_at > now`, so overdue rows
+  never appear. The daily job remains necessary hygiene (storage and the
+  publish pre-check), and it stays scheduled for a later WU.
+- **Boundaries.** No read-by-id, no cancel/close endpoint (that belongs to the
+  future `CompleteGroup`/`AcceptInvitation` flow), no retention job, no real
+  auth beyond the `X-Player-Id` stub.
+- **Tests.** `JdbcBoardListingsIT` walks five rows sharing the same
+  `created_at` in pages of two and proves the walk matches one big query with
+  no gaps or duplicates; it also covers the full-page-last-page and
+  cursor-at-the-oldest-row cases. `SearchBoardServiceTest` covers the cursor
+  translation and anchoring. `PublishListingControllerTest` and
+  `SearchBoardControllerTest` run the REAL services on hand-rolled fakes:
+  JSON → command → 201/404/422/400, the stale flags on the wire, and the
+  cursor round trip.
+
+## WU14 — Hostile input by default (Bean Validation + a generic 500)
+
+| Piece | Package | Content |
+|---|---|---|
+| DTO constraints | `adapters.in.rest` | `@NotNull`, `@NotBlank`, `@NotEmpty`, `@Valid` in cascade and `List<@NotNull @Valid ...>` on both request records |
+| Controller binding | `adapters.in.rest` | `@Valid @RequestBody` on both POST endpoints |
+| Advice | `adapters.in.rest` | `MethodArgumentNotValidException` → 422; `ConstraintViolationException` → 422 |
+| Violation wording | `adapters.in.rest` | `WirePresence` — builds `<path> is required` from the violation path, locale-independent |
+| Generic 500 | `adapters.in.rest` | the anomaly handler answers a blank ProblemDetail: generic detail, no extra properties |
+
+- **Presence is declared, not remembered (user decision).** The input is
+  hostile by default. A developer who adds a field to a DTO must not have to
+  remember to guard it by hand — the declaration says "this must be here" and
+  the test suite says "you forgot". This is the reason Bean Validation was
+  adopted after being evaluated and rejected once: the cost of a hand-written
+  guard is not the guard, it is the day somebody forgets one.
+- **Only presence moved.** Format stays in `WireParsing` (friendly brackets,
+  case-insensitive enums, ISO times, zone ids) and business rules stay in the
+  domain value objects. Two mechanisms for two different jobs, never three for
+  one.
+- **The 422 wording is ours, not the framework's.** Hibernate Validator's
+  default messages come from a resource bundle that follows the JVM's locale:
+  a Spanish server would answer a Spanish error to an English API. The advice
+  builds the message from the violation PATH, so the answer is identical
+  everywhere and the nested structure survives (`schedule.windows[0].day is
+  required`).
+- **The annotation is a test, not a comment.**
+  `everyFieldOfTheRequestIsDeclaredRequired` walks each record's fields and
+  their presence constraints — including the type arguments of collections,
+  which only the ANNOTATED type carries — and fails if a field lacks one.
+- **The generic 500 is blank.** No exception class, no message, no stack
+  trace, no extra properties: only `500`/`Internal error`/`Unexpected error`.
+  The stack trace goes to the ERROR log, where the operator reads it. A
+  caller who learns WHICH failure happened learns something about the
+  server's internals for free, and the request may be hostile.
+- **Verified by test, not by inspection.** `ApiErrorHandlingTest` asserts the
+  generic body contains no exception class, no JDBC URL, no host, no project
+  name and no stack frames, that the properties are empty, and that two
+  different anomalies produce the SAME detail.
+
+## WU13 — Read your own character (and make the WU8 Location true)
+
+| Piece | Package | Content |
+|---|---|---|
+| Driving port | `application.port.in` | `GetCharacter` — returns the caller's own `Character` |
+| Service | `application.service` | `GetCharacterService` — resolves the caller, loads, enforces ownership |
+| Not-found factory | `application.error` | `ResourceNotFoundException.characterNotFound()` — ONE message, no parameter |
+| Endpoint | `adapters.in.rest` | `GET /api/characters/{id}` → `200` + the character sheet |
+| Response DTO | `adapters.in.rest` | `CharacterResponse` — every bracket's standing, keyed `2v2`/`3v3` |
+
+- **Anti-enumeration is now total across three paths.** An unknown id, another
+  player's character and a segment that is not even a UUID all produce the same
+  404 with detail `Character not found`. A malformed id cannot name a character
+  either, and giving it a different status would only add a second answer to
+  reason about.
+- **The message has exactly one source.** `PublishListingService` previously
+  held a private `CHARACTER_NOT_FOUND` constant; duplicating it in the new
+  service would have been two places that can drift apart. A static factory on
+  `ResourceNotFoundException` means the rule cannot be re-typed wrong.
+- **The caller is resolved BEFORE the lookup**, as in publish: an
+  unauthenticated request is a 401 whether or not the id exists.
+- **`ProblemDetail.instance` echoes the request URI.** Comparing two 404 bodies
+  byte-for-byte fails on that field alone, and that is correct behavior, not a
+  leak: the URI is the caller's own input. `GetCharacterControllerTest`
+  therefore compares the problem map without `instance` — type, title, status,
+  detail and the absence of extra properties must all match.
+- **The character sheet is not the board projection.** It returns every
+  bracket's standing with rating, season and observation date, and no stale
+  flags: freshness is a board-read policy, and this endpoint reports observed
+  evidence with its dates. `ownerId` stays out here too.
+- **This closes the WU8 debt.** `POST /api/characters` has returned
+  `Location: /api/characters/{id}` since WU8 while that URL answered 404. The
+  header is now true without touching it. Listings still have no read-by-id, so
+  their 201 keeps carrying no Location.
+- **Boundaries.** No update, no delete, no listing read-by-id, no public view
+  of other players' characters — that last one is a product decision, not an
+  oversight.
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
@@ -462,8 +643,15 @@ own steps: the Blizzard API client (sync step), real auth beyond the
 
 ## Next step
 
-WU11 (listing persistence and the real board query) is done.
-Next: WU12 — expose `PublishListing` and `SearchBoard` through REST, wire both
-services as beans, supply the configured 24-hour TTL, and bound pagination
-before the board is public. The current season already comes from
-`pvp.current-season`.
+WU12 (REST exposure, keyset pagination, bean wiring and the configured TTL),
+WU13 (read your own character, with total anti-enumeration) and WU14 (declared
+presence + a blank generic 500) are done.
+
+Next: WU15 — the retention sweep. A daily job marks overdue ACTIVE listings
+EXPIRED and deletes CANCELLED/EXPIRED rows older than 30 days. The board is
+already correct without it (the query filters overdue rows out), so this is
+hygiene, not a correctness blocker.
+
+Still open afterwards: the group-completion flow (bulk close of the player's
+listings, whether they close their own or accept an invitation) and a listing
+read-by-id resource.
