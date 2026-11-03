@@ -402,9 +402,9 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   boundaries for ratings and gear, previous-season and unranked evidence,
   recency order and full aggregate hydration. Both run in failsafe
   (`mvnw verify`).
-- **Retention is a scheduled job, not lazy cleanup (user decision, later
-  WU).** A daily job will mark overdue ACTIVE listings EXPIRED and delete
-  CANCELLED/EXPIRED rows older than 30 days. Publishing already expires the
+- **Retention is a scheduled job, not lazy cleanup (user decision, WU16).**
+  A daily job marks overdue ACTIVE listings EXPIRED and deletes the rows that
+  are no longer ACTIVE, older than 30 days. Publishing already expires the
   character's due rows for the bracket it touches, but every other overdue row
   stays ACTIVE until then, so the sweep is required before the board is public.
 
@@ -670,13 +670,13 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   rows and let the new publication hit `ux_lfg_listings_active`, so the bug
   looked like a uniqueness problem instead of a query problem. Any range
   predicate gets an explicit `@Query`; the method name is not documentation.
-- **The unit close is per entity; the WU16 job will need it batched.**
+- **The unit close is per entity; the WU16 job batches the pages.**
   `ListingCloser.close` issues one `UPDATE`, one request sweep and one fact
-  insert per listing, which is right for every close that happens today (one
+  insert per listing, which is right for every request-driven close (one
   listing, or the handful of a player's active ones). The retention job walks
-  every overdue listing in the database, so if the volume grows it must call
-  the same close in pages — chunked transactions — instead of one row at a
-  time: the single door stays, the cost per transaction changes.
+  every overdue listing in the database, so it calls the same close inside a
+  page of bounded size, one transaction per page: the single door stays, the
+  number of rows per commit changes. See WU16.
 - **The facts outlive their subjects.** `listing_outcomes` has NO foreign key
   on the listing (the fact must outlive the row the retention job deletes) and
   a nullable `character_id` with `ON DELETE SET NULL` (the fact must outlive
@@ -699,20 +699,64 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
   proves the same against real PostgreSQL, including that a fact survives the
   deletion of its character.
 
-## WU16 — The retention sweep (still to come)
+## WU16 — The retention sweep
 
-A daily job marks overdue ACTIVE listings EXPIRED, writes their fact, and
-deletes the CANCELLED/EXPIRED rows whose `expires_at` is older than 30 days.
-The board is already correct without it (the query filters overdue rows out),
-so this is hygiene, not a correctness blocker.
+A daily job at 04:00 UTC marks overdue ACTIVE listings EXPIRED, writes their
+fact, cancels their pending requests, and deletes the rows that are no longer
+ACTIVE whose `expires_at` is older than 30 days. The board is already correct
+without it (the query filters overdue rows out), so this is hygiene, not a
+correctness blocker — but without it a listing nobody touches would stay
+ACTIVE for ever (never reaching the facts) and its row would never be deleted.
 
-It must close through `ListingCloser`, so every listing it expires writes its
-fact and cancels its pending requests. Today `close` works one entity at a
-time, which is fine for the handful of rows a publication or a group touches;
-the job walks the whole table. Start simple (one transaction per page of
-listings, reusing `close`), and if the volume grows, page over the overdue ids
-and keep chunking transactions — the single door does not change, only how
-many rows travel through it per commit.
+- **Three passes, and the order is the rule.** Close the overdue listings
+  first, then expire the requests left over from listings that died in an
+  earlier run, then delete. Deleting before closing would remove a row whose
+  fact was never written; expiring requests before closing would mark as
+  EXPIRED what the close should have marked CANCELLED. The order is asserted
+  in `RetentionSweepServiceTest`.
+- **Every close still goes through `ListingCloser`.** The sweep does not flip
+  a status in bulk: it closes one listing at a time through the same door as
+  a withdrawal or a formed group, so each listing writes its EXPIRED fact and
+  cancels its pending requests. A bulk UPDATE would be faster and would
+  silently lose both.
+- **One page per transaction.** `ListingRetention` takes a `pageSize` and
+  reports how many rows it handled; the service loops until a page comes back
+  short. A full backlog becomes many short commits instead of one long
+  transaction, and a crash replays only the page that failed. The whole run is
+  idempotent: a closed listing is no longer ACTIVE, a deleted row is gone, and
+  an EXPIRED request is not PENDING.
+- **Only ACTIVE survives the deletion (user decision).** Every closed status —
+  CANCELLED, EXPIRED and COMPLETED — is deleted once its `expires_at` is
+  older than the window. The history of the success rate lives in
+  `listing_outcomes`, and every COMPLETED row already wrote its fact there;
+  keeping the listing too would duplicate the source of the metrics and grow
+  the board table without a ceiling. The facts survive the deletion by design
+  (`listing_outcomes` has no foreign key on the listing); `join_requests`,
+  `listing_languages` and `listing_windows` die with it through the database
+  cascade. The predicate is written as `status <> ACTIVE`, not as a list, so
+  the rule is the one stated: the board table only holds what is on the board.
+- **The window and the cron are server-owned configuration.**
+  `pvp.retention-after-expiry` (default `P30D`) and `pvp.retention-cron`
+  (default `0 0 4 * * *`, evaluated in UTC). A zero or negative window fails
+  the boot, like the TTL: a misconfiguration must kill the process, not the
+  data.
+- **ONE INSTANCE, NO LOCK (documented assumption).** Two instances running the
+  job at the same instant would both try to close the same rows; the partial
+  unique index and the fact primary key would turn that into an error and a
+  rollback, not duplicated history. The safe multi-instance design is a
+  PostgreSQL advisory lock or `FOR UPDATE SKIP LOCKED`; it goes in the job the
+  day there is a second instance, not before.
+- **The job logs its report, not its rows.** One INFO line per run with the
+  three counters. A failure propagates and Spring logs it; the pages already
+  committed stay committed, which is the point of the page size.
+- **Tests.** `RetentionSweepServiceTest` covers the drain (full pages, a short
+  page, an exact multiple), the order, the cutoff and the fail-fast
+  configuration. `JpaListingRetentionIT` covers the same against real
+  PostgreSQL: an overdue listing closed with fact and cancelled requests, a
+  live one untouched, two pages drained, deletion past the window with the
+  fact kept, deletion inside the window refused, a COMPLETED listing deleted
+  past the window with its fact surviving, requests marked EXPIRED, and the
+  whole wired sweep in one run.
 
 ## Error strategy (decided before the application layer)
 
@@ -770,14 +814,11 @@ own steps: the Blizzard API client (sync step), real auth beyond the
 
 WU12 (REST exposure, keyset pagination, bean wiring and the configured TTL),
 WU13 (read your own character, with total anti-enumeration), WU14 (declared
-presence + a blank generic 500) and WU15 (the group handshake and the facts
-of a finished listing) are done.
+presence + a blank generic 500), WU15 (the group handshake and the facts of a
+finished listing) and WU16 (the daily retention sweep) are done.
 
-Next: WU16 — the retention sweep. A daily job marks overdue ACTIVE listings
-EXPIRED, writes their EXPIRED fact and deletes the CANCELLED/EXPIRED rows
-whose `expires_at` is older than 30 days. The board is already correct
-without it (the query filters overdue rows out), so this is hygiene, not a
-correctness blocker.
+Next: the Blizzard API client that fills the ratings and the gear, then real
+auth beyond the `X-Player-Id` stub, then the UI.
 
 Still open afterwards: the lobby with chat (it needs a Group entity, which
 does not exist yet) and a listing read-by-id resource.

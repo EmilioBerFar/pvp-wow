@@ -164,13 +164,6 @@ final class JpaListingLifecycle implements ListingLifecycle {
         return joinRequests.countPending(ownerId.value(), JoinRequestStatus.PENDING, now);
     }
 
-    @Override
-    public int expirePendingRequests(Instant now) {
-        return transactions.execute(status ->
-                joinRequests.expirePending(JoinRequestStatus.PENDING,
-                        JoinRequestStatus.EXPIRED, now));
-    }
-
     private ListingEntity requireListing(ListingId listingId) {
         return listings.findById(listingId.value())
                 .orElseThrow(() -> new IllegalArgumentException(

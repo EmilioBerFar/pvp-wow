@@ -26,3 +26,8 @@ pvp:
   # Every published listing lives 24 hours. Server-owned: no inbound command
   # can negotiate it. Zero or negative fails the boot.
   listing-ttl: PT24H
+  # The retention sweep: a daily job at 04:00 UTC that closes the overdue
+  # listings, expires their requests and deletes the closed rows older than
+  # the window below. Zero or negative fails the boot.
+  retention-cron: "0 0 4 * * *"
+  retention-after-expiry: P30D

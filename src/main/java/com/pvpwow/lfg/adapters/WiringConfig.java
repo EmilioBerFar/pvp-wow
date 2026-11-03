@@ -6,6 +6,7 @@ import com.pvpwow.lfg.application.port.in.PublishListing;
 import com.pvpwow.lfg.application.port.in.RegisterCharacter;
 import com.pvpwow.lfg.application.port.in.RejectJoinRequest;
 import com.pvpwow.lfg.application.port.in.RequestToJoin;
+import com.pvpwow.lfg.application.port.in.RunRetentionSweep;
 import com.pvpwow.lfg.application.port.in.SearchBoard;
 import com.pvpwow.lfg.application.port.in.WithdrawJoinRequest;
 import com.pvpwow.lfg.application.port.in.WithdrawListing;
@@ -13,6 +14,7 @@ import com.pvpwow.lfg.application.port.out.BoardListings;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.CurrentPlayerProvider;
 import com.pvpwow.lfg.application.port.out.ListingLifecycle;
+import com.pvpwow.lfg.application.port.out.ListingRetention;
 import com.pvpwow.lfg.application.port.out.Listings;
 import com.pvpwow.lfg.application.port.out.Seasons;
 import com.pvpwow.lfg.application.service.AcceptJoinRequestService;
@@ -21,6 +23,7 @@ import com.pvpwow.lfg.application.service.PublishListingService;
 import com.pvpwow.lfg.application.service.RegisterCharacterService;
 import com.pvpwow.lfg.application.service.RejectJoinRequestService;
 import com.pvpwow.lfg.application.service.RequestToJoinService;
+import com.pvpwow.lfg.application.service.RetentionSweepService;
 import com.pvpwow.lfg.application.service.SearchBoardService;
 import com.pvpwow.lfg.application.service.WithdrawJoinRequestService;
 import com.pvpwow.lfg.application.service.WithdrawListingService;
@@ -106,5 +109,22 @@ public class WiringConfig {
     WithdrawListing withdrawListing(Characters characters, ListingLifecycle lifecycle,
                                     CurrentPlayerProvider currentPlayer, Clock clock) {
         return new WithdrawListingService(characters, lifecycle, currentPlayer, clock);
+    }
+
+    @Bean
+    RunRetentionSweep runRetentionSweep(ListingRetention retention,
+                                        Clock clock,
+                                        @Value("${pvp.retention-after-expiry}")
+                                        Duration retentionWindow) {
+        // Fail fast, like the TTL: a zero or negative window would delete
+        // listings that are still relevant, and a negative one would delete
+        // the whole history on the first run. A misconfiguration must kill
+        // the boot, not the data.
+        if (retentionWindow.isZero() || retentionWindow.isNegative()) {
+            throw new IllegalStateException(
+                    "pvp.retention-after-expiry must be positive, got: " + retentionWindow);
+        }
+        return new RetentionSweepService(retention, clock, retentionWindow,
+                RetentionSweepService.DEFAULT_PAGE_SIZE);
     }
 }

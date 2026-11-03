@@ -77,11 +77,4 @@ public interface ListingLifecycle {
      * job marks it. Counting it would block the player forever.
      */
     int pendingRequestCount(PlayerId ownerId, Instant now);
-
-    /**
-     * Marks the PENDING requests that outlived their listing as EXPIRED.
-     * The retention job is the only thing that runs it: it is the clock that
-     * decides.
-     */
-    int expirePendingRequests(Instant now);
 }

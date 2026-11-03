@@ -303,17 +303,5 @@ class RequestToJoinServiceTest {
                     .filter(request -> request.expiresAt().isAfter(now))
                     .count();
         }
-
-        @Override
-        public int expirePendingRequests(Instant now) {
-            int expired = 0;
-            for (JoinRequest request : requests) {
-                if (request.isPending() && !request.expiresAt().isAfter(now)
-                        && request.expireIfDue(now)) {
-                    expired++;
-                }
-            }
-            return expired;
-        }
     }
 }

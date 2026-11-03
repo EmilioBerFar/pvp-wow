@@ -228,18 +228,6 @@ class JpaListingLifecycleIT {
     }
 
     @Test
-    void theRetentionJobMarksTheDeadPendingRequestsAsExpired() {
-        Character owner = savedCharacter("Frostbolt", OWNER);
-        Character requester = savedCharacter("Ember", REQUESTER_OWNER);
-        LfgListing listing = publish(owner, Bracket.THREE_VS_THREE);
-        JoinRequest request = pendingRequest(requester.id(), listing, OWNER);
-
-        assertThat(lifecycle.expirePendingRequests(NOW.plus(Duration.ofHours(25))))
-                .isEqualTo(1);
-        assertThat(statusOfRequest(request.id())).isEqualTo("EXPIRED");
-    }
-
-    @Test
     void theListingsOfSomebodyElseAreNotTouched() {
         Character owner = savedCharacter("Frostbolt", OWNER);
         Character requester = savedCharacter("Ember", REQUESTER_OWNER);

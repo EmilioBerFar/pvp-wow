@@ -372,10 +372,5 @@ class AcceptJoinRequestServiceTest {
         public int pendingRequestCount(PlayerId ownerId, Instant now) {
             return 0;
         }
-
-        @Override
-        public int expirePendingRequests(Instant now) {
-            return 0;
-        }
     }
 }
