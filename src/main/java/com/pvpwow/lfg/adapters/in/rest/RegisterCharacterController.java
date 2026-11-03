@@ -1,6 +1,7 @@
 package com.pvpwow.lfg.adapters.in.rest;
 
 import com.pvpwow.lfg.application.port.in.RegisterCharacter;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -23,7 +24,7 @@ public final class RegisterCharacterController {
 
     @PostMapping
     ResponseEntity<RegisteredCharacterResponse> register(
-            @RequestBody RegisterCharacterRequest request) {
+            @Valid @RequestBody RegisterCharacterRequest request) {
         UUID characterId = registerCharacter.register(request.toCommand()).value();
         URI location = UriComponentsBuilder.fromPath("/api/characters/{id}")
                 .buildAndExpand(characterId).toUri();

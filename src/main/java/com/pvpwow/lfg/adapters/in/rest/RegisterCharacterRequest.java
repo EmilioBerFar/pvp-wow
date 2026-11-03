@@ -1,15 +1,17 @@
 package com.pvpwow.lfg.adapters.in.rest;
 
 import com.pvpwow.lfg.application.port.in.RegisterCharacter.RegisterCharacterCommand;
-import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.CharacterName;
 import com.pvpwow.lfg.domain.character.Realm;
 import com.pvpwow.lfg.domain.character.Region;
 import com.pvpwow.lfg.domain.character.Specialization;
 import com.pvpwow.lfg.domain.character.WowClass;
-import com.pvpwow.lfg.domain.shared.DomainRuleViolationException;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -22,71 +24,44 @@ import java.util.stream.Collectors;
  * where the advice lives to translate it into a 422. The use case never sees
  * an invalid declared fact.
  *
- * <p>Wire conventions: bracket keys are friendly ({@code 2v2}, {@code 3v3});
- * everything else uses enum names ({@code EU}, {@code MAGE},
- * {@code MAGE_FROST}), case-insensitive.
+ * <p>PRESENCE is declared with Bean Validation, so a field added to this record
+ * without {@code @NotNull} fails the test suite rather than production.
+ * Format and business rules stay in {@link WireParsing} and in the domain
+ * value objects.
+ *
+ * <p>{@code ratings} is the one OPTIONAL field, and on purpose: a character
+ * may be registered unranked, so an absent map is a valid request. Its
+ * CONTENTS are constrained when present, and the domain decides what an
+ * absent map means (every bracket stays unranked).
  */
 record RegisterCharacterRequest(
-        String name,
-        String realm,
-        String region,
-        String wowClass,
-        Set<String> specs,
-        Integer itemLevel,
-        Map<String, Integer> ratings) {
+        @NotNull @NotBlank String name,
+        @NotNull @NotBlank String realm,
+        @NotNull @NotBlank String region,
+        @NotNull @NotBlank String wowClass,
+        @NotEmpty Set<@NotNull @NotBlank String> specs,
+        @NotNull @Min(1) Integer itemLevel,
+        @Valid Map<@NotNull @NotBlank String, @NotNull @Min(0) Integer> ratings) {
+
+    // `ratings` is OPTIONAL: an unranked character is a valid registration,
+    // not a malformed request. Only its CONTENTS are validated when present.
+    // Absent means "every bracket stays unranked".
 
     RegisterCharacterCommand toCommand() {
         return new RegisterCharacterCommand(
-                new CharacterName(required(name, "name")),
-                new Realm(required(realm, "realm")),
-                parse(Region.class, required(region, "region")),
-                parse(WowClass.class, required(wowClass, "wowClass")),
-                specs == null ? Set.of()
-                        : specs.stream()
-                                .map(spec -> parse(Specialization.class, required(spec, "spec")))
-                                .collect(Collectors.toUnmodifiableSet()),
-                itemLevel == null ? reject("itemLevel is required") : itemLevel,
+                new CharacterName(WireParsing.required(name, "name")),
+                new Realm(WireParsing.required(realm, "realm")),
+                WireParsing.parseEnum(Region.class, WireParsing.required(region, "region")),
+                WireParsing.parseEnum(WowClass.class, WireParsing.required(wowClass, "wowClass")),
+                specs.stream()
+                        .map(spec -> WireParsing.parseEnum(Specialization.class,
+                                WireParsing.required(spec, "spec")))
+                        .collect(Collectors.toUnmodifiableSet()),
+                itemLevel,
                 ratings == null ? Map.of()
                         : ratings.entrySet().stream()
                                 .collect(Collectors.toUnmodifiableMap(
-                                        entry -> bracketOf(entry.getKey()),
-                                        entry -> ratingOf(entry.getValue()))));
-    }
-
-    private static String required(String value, String field) {
-        if (value == null || value.isBlank()) {
-            throw new DomainRuleViolationException("%s is required".formatted(field));
-        }
-        return value.trim();
-    }
-
-    private static int ratingOf(Integer rating) {
-        if (rating == null) {
-            throw new DomainRuleViolationException("A rating must be a number, not null");
-        }
-        return rating;
-    }
-
-    private static Bracket bracketOf(String key) {
-        String normalized = required(key, "bracket").toLowerCase(Locale.ROOT);
-        return switch (normalized) {
-            case "2v2" -> Bracket.TWO_VS_TWO;
-            case "3v3" -> Bracket.THREE_VS_THREE;
-            default -> throw new DomainRuleViolationException(
-                    "Unknown bracket '%s' — valid: 2v2, 3v3".formatted(key));
-        };
-    }
-
-    private static <E extends Enum<E>> E parse(Class<E> type, String value) {
-        try {
-            return Enum.valueOf(type, value.toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException unknownValue) {
-            throw new DomainRuleViolationException(
-                    "Unknown %s '%s'".formatted(type.getSimpleName(), value));
-        }
-    }
-
-    private static <T> T reject(String message) {
-        throw new DomainRuleViolationException(message);
+                                        entry -> WireParsing.bracket(entry.getKey()),
+                                        entry -> entry.getValue())));
     }
 }
