@@ -1,7 +1,7 @@
 package com.pvpwow.lfg.adapters.in.rest;
 
-import com.pvpwow.lfg.adapters.out.security.UnauthorizedException;
 import com.pvpwow.lfg.application.error.ResourceNotFoundException;
+import com.pvpwow.lfg.application.error.UnauthorizedException;
 import com.pvpwow.lfg.domain.shared.DomainRuleViolationException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;

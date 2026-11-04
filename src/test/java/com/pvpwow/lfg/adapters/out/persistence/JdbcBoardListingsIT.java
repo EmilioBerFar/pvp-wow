@@ -8,6 +8,7 @@ import com.pvpwow.lfg.application.port.out.BoardListings.BoardSlice;
 import com.pvpwow.lfg.application.port.out.BoardListings.SearchCriteria;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.Listings;
+import com.pvpwow.lfg.application.port.out.Players;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -86,6 +87,9 @@ class JdbcBoardListingsIT {
     private Characters characters;
 
     @Autowired
+    private Players players;
+
+    @Autowired
     private Listings listings;
 
     @Autowired
@@ -97,6 +101,7 @@ class JdbcBoardListingsIT {
     @AfterEach
     void emptyTheBoard() {
         jdbc.execute("delete from characters");
+        jdbc.execute("delete from players");
     }
 
     @Test
@@ -298,6 +303,7 @@ class JdbcBoardListingsIT {
 
     @Test
     void hydratesTheWholeAggregateAndThePinnedListingFacts() {
+        PlayersFixture.ensure(players, PLAYER);
         Character character = Character.register(PLAYER,
                 new CharacterName("Frostbolt"),
                 new Realm("Sanguino"),
@@ -373,6 +379,7 @@ class JdbcBoardListingsIT {
     private Character savedCharacter(String name, Region region, WowClass wowClass, int itemLevel,
                                      Instant gearObservedAt, Set<Specialization> specs,
                                      Map<Bracket, PvpStanding> standings) {
+        PlayersFixture.ensure(players, PLAYER);
         Character character = Character.register(PLAYER,
                 new CharacterName(name),
                 new Realm("Sanguino"),

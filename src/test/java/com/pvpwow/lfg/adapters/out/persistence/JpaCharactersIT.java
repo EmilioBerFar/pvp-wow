@@ -1,6 +1,7 @@
 package com.pvpwow.lfg.adapters.out.persistence;
 
 import com.pvpwow.lfg.application.port.out.Characters;
+import com.pvpwow.lfg.application.port.out.Players;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
@@ -16,6 +17,7 @@ import com.pvpwow.lfg.domain.character.Specialization;
 import com.pvpwow.lfg.domain.character.WowClass;
 import com.pvpwow.lfg.domain.player.PlayerId;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -67,14 +69,23 @@ class JpaCharactersIT {
     private Characters characters;
 
     @Autowired
+    private Players players;
+
+    @Autowired
     private CharacterJpaRepository repository;
 
     @Autowired
     private JdbcTemplate jdbc;
 
+    @BeforeEach
+    void ensureTheOwnerExists() {
+        PlayersFixture.ensure(players, PLAYER);
+    }
+
     @AfterEach
     void emptyTheBoard() {
         repository.deleteAll();
+        jdbc.execute("delete from players");
     }
 
     @Test

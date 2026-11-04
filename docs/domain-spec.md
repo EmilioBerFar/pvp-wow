@@ -149,7 +149,7 @@ class built `/{locale}/character/{slug}/{name}` and would have linked nowhere.
 |-------|------|-------|
 | `Username` | `domain.player`, `record(String value)` | Trim; 3–24 chars; only letters, digits, `.`, `_`, `-`; must start with a letter |
 | `BattleTag` | `domain.player`, `record(String value)` | Battle.net contact identity — account-level, not per character. Trim; lowercase the name part. Format: 3–12 alphanumerics, `#`, 4–5 digits (e.g. `emilio#12345`); digits in the name part are allowed — verified against a real tag |
-| `Player` | `domain.player`, **class** | Stub-phase aggregate root. State: `PlayerId id`, `Username username`, `BattleTag battleTag`. Same pattern as `Character`: two doors (`register` generates the id, `rehydrate` receives it), no setters, `equals`/`hashCode` **by id only** — a record here would give structural equality, and a player who changes battle tag would stop being the same player. The battle tag is required: it is the ONLY contact channel in the product. Battle.net OAuth later enriches this concept, never replaces it |
+| `Player` | `domain.player`, **class** | Aggregate root of the account. State: `PlayerId id`, `Username username`, `BattleTag battleTag`. Same pattern as `Character`: two doors (`register` generates the id, `rehydrate` receives it), no setters, `equals`/`hashCode` **by id only** — a record here would give structural equality, and a player who changes battle tag would stop being the same player. The battle tag is required: it is the ONLY contact channel in the product. Persisted since WU17; Battle.net OAuth later enriches this concept, never replaces it |
 
 ## WU4 — Listing value objects
 
@@ -758,6 +758,85 @@ ACTIVE for ever (never reaching the facts) and its row would never be deleted.
   past the window with its fact surviving, requests marked EXPIRED, and the
   whole wired sweep in one run.
 
+## WU17 — Real players
+
+Until now the auth stub accepted ANY UUID as `X-Player-Id`, so
+`characters.owner_id` pointed at a value that existed nowhere. WU17 makes the
+owner a row: the `players` table, a sign-up use case, and the foreign key that
+turns "an owner" from a claim into a fact. It is deliberately small — it exists
+to make the Battle.net login of WU18 a drop-in replacement, not a rewrite.
+
+- **The header is a CLAIM, and the adapter verifies it.** `X-Player-Id` is
+  still the dev identity, but now a well-formed UUID that names no player is a
+  401 (`Unknown player`), not an identity. The check lives in
+  `DevCurrentPlayerProvider`, because authentication must guarantee that the
+  identity it returns is real: if an unknown id travelled through the use cases
+  it would only fail at the foreign key, as a 500. Downstream code receives a
+  genuine owner. Cost: one primary-key lookup per request.
+- **401, not 404.** The caller controls this header, so naming the problem
+  leaks nothing that is not already theirs; and "not authenticated" is exactly
+  what an id with no account means. A 404 would suggest a resource they could
+  find.
+- **Sign-up is the only unauthenticated write.** `POST /api/players` takes
+  `username` and `battleTag`; there is no identity to present before the
+  identity exists. `GetCurrentPlayer` (`GET /api/players/me`) is the only read
+  of an account: a battle tag is personal contact data, so there is no
+  `GET /players/{id}` to harvest them. `POST` answers 201 with `{ "id": ... }`
+  and NO `Location`, because the created resource has no public address.
+- **Duplicates are 422, like every other invalid input.** The pre-checks are
+  advisory UX; the law is in the database:
+  `ux_players_username on lower(username)` (a handle is case-insensitive) and
+  `ux_players_battle_tag` (the value object already folds the tag). A race past
+  the pre-check still ends as a 500 today, exactly like the character
+  uniqueness rule.
+- **`characters.owner_id` is a foreign key `ON DELETE CASCADE`.** Deleting a
+  player deletes their characters; their `listing_outcomes` survive with
+  `character_id` set to NULL, which is the fact table's existing promise.
+  `join_requests.owner_id` gets the same constraint: leaving one player
+  reference unenforced while the other is enforced would be a half-true schema.
+- **The FK is added in TWO steps: `NOT VALID` (V4), then `VALIDATE` (V5).**
+  Every character registered before WU17 has an owner id that no player
+  holds, because there was no players table to hold it. Backfilling would mean
+  inventing a username and a battle tag — fabricating identity — so V4
+  declares the constraint `NOT VALID`: it is enforced for every NEW write (the
+  rule starts now) and the historical rows are left untouched. V5 then runs
+  `alter table ... validate constraint ...`, which scans each table once and
+  promotes the constraint to fully trusted.
+  The split is not ceremony. `ADD CONSTRAINT ... NOT VALID` takes a SHARE ROW
+  EXCLUSIVE lock and does no scan; `VALIDATE CONSTRAINT` takes a SHARE UPDATE
+  EXCLUSIVE lock — reads and writes keep flowing — and does the scan. One
+  combined statement would hold the stronger lock for the entire scan, which is
+  the classic way to freeze a large table in production. With no production
+  data the scan is free, but the discipline is the lesson. V5 fails loudly if a
+  database still has orphans: a constraint that lies is worse than a failed
+  boot.
+  A development database that predates WU17 can be cleaned before starting:
+  ```sql
+  delete from join_requests r
+   where not exists (select 1 from players p where p.id = r.owner_id);
+  delete from characters c
+   where not exists (select 1 from players p where p.id = c.owner_id);
+  ```
+  The second delete cascades to the character's listings, requests, specs and
+  standings; the facts survive with `character_id` set to NULL. Verified by
+  `JpaPlayersIT.aCharacterCannotBeSavedForAnOwnerThatIsNotAPlayer` for the
+  enforcement of new rows, and by every IT container validating an empty table
+  at boot for the promotion.
+- **`UnauthorizedException` moved to `application.error`.** More than one layer
+  needs to say "this identity is not a player": the security adapter when the
+  header is missing, the application when the player has vanished. Keeping it
+  in the adapter would force the application to import an adapter, and
+  dependencies point inward.
+- **Tests.** `RegisterPlayerServiceTest` (identity returned, duplicates
+  rejected, nothing saved on failure), `GetCurrentPlayerServiceTest` (unknown
+  identity is 401), `RegisterPlayerControllerTest` (201 with no Location, 422
+  for a missing field / malformed tag / taken handle, 400 for broken JSON),
+  `CurrentPlayerControllerTest`, `DevCurrentPlayerProviderTest` (an unknown but
+  well-formed UUID is 401), `JpaPlayersIT` (round-trip, case-insensitive handle
+  index, battle-tag index, the FK refusing an orphan character) and
+  `PlayerFlowIT` (sign-up → `/me` → register a character, all through the real
+  adapter and the real database).
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
@@ -815,10 +894,17 @@ own steps: the Blizzard API client (sync step), real auth beyond the
 WU12 (REST exposure, keyset pagination, bean wiring and the configured TTL),
 WU13 (read your own character, with total anti-enumeration), WU14 (declared
 presence + a blank generic 500), WU15 (the group handshake and the facts of a
-finished listing) and WU16 (the daily retention sweep) are done.
+finished listing), WU16 (the daily retention sweep) and WU17 (real players and
+the owner foreign key) are done.
 
-Next: the Blizzard API client that fills the ratings and the gear, then real
-auth beyond the `X-Player-Id` stub, then the UI.
+Next: WU18 — Battle.net OAuth2 replaces the `X-Player-Id` stub. Logging in
+creates or recovers the same `Player` aggregate, so only the
+`CurrentPlayerProvider` adapter changes; that is the hexagonal architecture
+paying its debt.
+
+Then: WU19 (import characters and their observed facts from Blizzard), WU20
+(the React client: board, publish, request, accept) and WU21 (a public
+deployment for the CV).
 
 Still open afterwards: the lobby with chat (it needs a Group entity, which
 does not exist yet) and a listing read-by-id resource.

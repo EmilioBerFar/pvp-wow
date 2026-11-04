@@ -3,6 +3,7 @@ package com.pvpwow.lfg.adapters.out.persistence;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.ListingLifecycle;
 import com.pvpwow.lfg.application.port.out.Listings;
+import com.pvpwow.lfg.application.port.out.Players;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -82,6 +83,9 @@ class JpaListingsIT {
     private Characters characters;
 
     @Autowired
+    private Players players;
+
+    @Autowired
     private Listings listings;
 
     @Autowired
@@ -97,6 +101,7 @@ class JpaListingsIT {
     void emptyTheBoard() {
         repository.deleteAll();
         jdbc.execute("delete from characters");
+        jdbc.execute("delete from players");
     }
 
     @Test
@@ -246,6 +251,7 @@ class JpaListingsIT {
     }
 
     private Character savedCharacter(String name) {
+        PlayersFixture.ensure(players, PLAYER);
         Character character = Character.register(PLAYER,
                 new CharacterName(name),
                 new Realm("Sanguino"),

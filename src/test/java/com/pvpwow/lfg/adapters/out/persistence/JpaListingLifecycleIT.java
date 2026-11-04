@@ -3,6 +3,7 @@ package com.pvpwow.lfg.adapters.out.persistence;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.ListingLifecycle;
 import com.pvpwow.lfg.application.port.out.Listings;
+import com.pvpwow.lfg.application.port.out.Players;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
@@ -80,6 +81,9 @@ class JpaListingLifecycleIT {
     private Characters characters;
 
     @Autowired
+    private Players players;
+
+    @Autowired
     private Listings listings;
 
     @Autowired
@@ -94,6 +98,7 @@ class JpaListingLifecycleIT {
         jdbc.execute("delete from listing_outcomes");
         jdbc.execute("delete from lfg_listings");
         jdbc.execute("delete from characters");
+        jdbc.execute("delete from players");
     }
 
     @Test
@@ -287,6 +292,7 @@ class JpaListingLifecycleIT {
     }
 
     private Character savedCharacter(String name, PlayerId owner) {
+        PlayersFixture.ensure(players, owner);
         Character character = Character.register(owner, new CharacterName(name),
                 new Realm("Sanguino"), Region.EU, WowClass.MAGE,
                 new GearSnapshot(new ItemLevel(675), NOW),

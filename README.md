@@ -53,6 +53,15 @@ default to the values in `docker-compose.yml`. Nothing secret is committed.
 ### The API
 
 ```bash
+# Sign up: the account that will own characters
+curl -X POST localhost:8080/api/players \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"Emilio","battleTag":"Emilio#12345"}'
+# → 201 {"id":"<player-uuid>"}; use that id as X-Player-Id from now on
+
+# Who am I
+curl localhost:8080/api/players/me -H 'X-Player-Id: <player-uuid>'
+
 # Register a character
 curl -X POST localhost:8080/api/characters \
   -H 'Content-Type: application/json' -H 'X-Player-Id: <player-uuid>' \
@@ -77,9 +86,10 @@ curl -X POST localhost:8080/api/listings/<listing-id>/join-requests \
 curl -X POST localhost:8080/api/join-requests/<id>/accept -H 'X-Player-Id: <owner-uuid>'
 ```
 
-`X-Player-Id` is a development stub for authentication. It is the **only**
-adapter that will be replaced when Battle.net OAuth arrives; the port, the
-use cases and the domain never learn the difference.
+`X-Player-Id` is a development stub for authentication: it is a claim, and the
+adapter verifies that the player it names exists. Battle.net OAuth (the next
+work unit) replaces the **only** adapter that will change; the port, the use
+cases and the domain never learn the difference.
 
 ---
 
@@ -283,11 +293,15 @@ The rules the suite follows:
 
 ## Where it is going
 
-- [WU16] the retention sweep: a daily job that expires overdue listings,
-  records their fact and deletes the dead rows after 30 days.
+- [WU17] real players: a `players` table, sign-up with a battle tag, and the
+  foreign key that makes `characters.owner_id` a real owner.
+- [WU18] Battle.net OAuth2: log in, create or recover the same player, and
+  retire the development header.
+- [WU19] the Blizzard import: your real characters, with their observed class,
+  specialization, rating and item level.
+- [WU20] the React client: board, publish, request, accept.
+- [WU21] a public deployment (the CV link).
 - A lobby with chat — which needs a `Group` entity that does not exist yet.
-- The Blizzard API sync, which replaces the declared facts with observed
-  ones.
 
 The working list, with the reasoning behind every decision, lives in
 [`docs/domain-spec.md`](docs/domain-spec.md).
@@ -296,7 +310,8 @@ The working list, with the reasoning behind every decision, lives in
 
 ## Status
 
-Phase 1, no frontend yet. The API is complete for the main flow: register a
-character, publish availability, browse the board with filters and
-pagination, ask to join, accept, reject, withdraw. Authentication is a
-development stub; the Blizzard API is not integrated.
+Phase 1, no frontend yet. The API is complete for the main flow: sign up as a
+player, register a character, publish availability, browse the board with
+filters and pagination, ask to join, accept, reject, withdraw. Authentication
+is still a development header (the player it names must exist); Battle.net
+OAuth is the next step. The Blizzard API is not integrated yet.

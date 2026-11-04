@@ -2,8 +2,10 @@ package com.pvpwow.lfg.adapters;
 
 import com.pvpwow.lfg.application.port.in.AcceptJoinRequest;
 import com.pvpwow.lfg.application.port.in.GetCharacter;
+import com.pvpwow.lfg.application.port.in.GetCurrentPlayer;
 import com.pvpwow.lfg.application.port.in.PublishListing;
 import com.pvpwow.lfg.application.port.in.RegisterCharacter;
+import com.pvpwow.lfg.application.port.in.RegisterPlayer;
 import com.pvpwow.lfg.application.port.in.RejectJoinRequest;
 import com.pvpwow.lfg.application.port.in.RequestToJoin;
 import com.pvpwow.lfg.application.port.in.RunRetentionSweep;
@@ -16,11 +18,14 @@ import com.pvpwow.lfg.application.port.out.CurrentPlayerProvider;
 import com.pvpwow.lfg.application.port.out.ListingLifecycle;
 import com.pvpwow.lfg.application.port.out.ListingRetention;
 import com.pvpwow.lfg.application.port.out.Listings;
+import com.pvpwow.lfg.application.port.out.Players;
 import com.pvpwow.lfg.application.port.out.Seasons;
 import com.pvpwow.lfg.application.service.AcceptJoinRequestService;
 import com.pvpwow.lfg.application.service.GetCharacterService;
+import com.pvpwow.lfg.application.service.GetCurrentPlayerService;
 import com.pvpwow.lfg.application.service.PublishListingService;
 import com.pvpwow.lfg.application.service.RegisterCharacterService;
+import com.pvpwow.lfg.application.service.RegisterPlayerService;
 import com.pvpwow.lfg.application.service.RejectJoinRequestService;
 import com.pvpwow.lfg.application.service.RequestToJoinService;
 import com.pvpwow.lfg.application.service.RetentionSweepService;
@@ -53,6 +58,16 @@ public class WiringConfig {
                                         Seasons seasons,
                                         Clock clock) {
         return new RegisterCharacterService(characters, currentPlayer, seasons, clock);
+    }
+
+    @Bean
+    RegisterPlayer registerPlayer(Players players) {
+        return new RegisterPlayerService(players);
+    }
+
+    @Bean
+    GetCurrentPlayer getCurrentPlayer(Players players, CurrentPlayerProvider currentPlayer) {
+        return new GetCurrentPlayerService(players, currentPlayer);
     }
 
     @Bean
