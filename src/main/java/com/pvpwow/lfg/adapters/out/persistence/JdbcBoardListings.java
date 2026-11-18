@@ -57,13 +57,23 @@ import java.util.UUID;
 final class JdbcBoardListings implements BoardListings {
 
     private final NamedParameterJdbcTemplate jdbc;
+    private final ReadOnlyTransactions reads;
 
-    JdbcBoardListings(NamedParameterJdbcTemplate jdbc) {
+    JdbcBoardListings(NamedParameterJdbcTemplate jdbc, ReadOnlyTransactions reads) {
         this.jdbc = jdbc;
+        this.reads = reads;
     }
 
     @Override
     public BoardSlice search(SearchCriteria criteria) {
+        // One read-only transaction for the WHOLE query: five statements that
+        // must see the same snapshot, in a transaction PostgreSQL opened as
+        // READ ONLY. Without it they would run in auto-commit, each in its own
+        // snapshot, and an accidental write would go through.
+        return reads.read(() -> searchInOneSnapshot(criteria));
+    }
+
+    private BoardSlice searchInOneSnapshot(SearchCriteria criteria) {
         MapSqlParameterSource parameters = new MapSqlParameterSource()
                 .addValue("region", criteria.region().name())
                 .addValue("bracket", criteria.bracket().name())

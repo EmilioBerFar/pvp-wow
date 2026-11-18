@@ -17,8 +17,67 @@ spring:
       # Flyway owns the schema. Hibernate only checks that the mapping still
       # matches what the migrations created — it never alters anything.
       ddl-auto: validate
+  session:
+    jdbc:
+      # NEVER: the tables are a Flyway migration (V7), like every other table
+      # in this database. A schema the application creates at boot is a schema
+      # two versions of the application can disagree about.
+      initialize-schema: never
+      table-name: SPRING_SESSION
+  security:
+    oauth2:
+      client:
+        registration:
+          # The registration id is part of the URLs Spring builds:
+          # /oauth2/authorization/battle-net and /login/oauth2/code/battle-net.
+          # Renaming it renames both, so the client's redirect URI must match.
+          battle-net:
+            # NO DEFAULT, on purpose. A placeholder here would let the
+            # application START without credentials and fail at the LOGIN
+            # instead, which is the wrong place: the operator sees a broken
+            # login and has to guess that the client was never configured.
+            # A missing placeholder fails the boot, with the name of the
+            # missing variable in the message. An application that cannot
+            # authenticate should not pretend to be running.
+            client-id: ${BATTLE_NET_CLIENT_ID}
+            client-secret: ${BATTLE_NET_CLIENT_SECRET}
+            client-name: Battle.net
+            authorization-grant-type: authorization_code
+            redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
+            scope:
+              - openid
+              # Needed by WU19 (character import). Asking once is cheaper than
+              # a second consent screen later.
+              - wow.profile
+        provider:
+          battle-net:
+            # Explicit endpoints instead of an issuer-uri: discovery would make
+            # application startup depend on reachability of Battle.net, and a
+            # test run has no business calling it.
+            authorization-uri: https://oauth.battle.net/authorize
+            token-uri: https://oauth.battle.net/token
+            user-info-uri: https://oauth.battle.net/userinfo
+            user-name-attribute: sub
+
+server:
+  servlet:
+    session:
+      # The session IS the credential: no cookie, no identity. SameSite=Lax
+      # rather than Strict because the OAuth callback is a cross-site
+      # top-level navigation that must still carry the session that holds the
+      # pending authorization request. Lax is also what makes CSRF-safe
+      # behaviour the default here (see SecurityConfig).
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${SESSION_COOKIE_SECURE:true}
+      timeout: 8h
 
 pvp:
+  auth:
+    # Where the browser lands after a successful login. The API is the product
+    # today; WU20 will point this at the SPA.
+    after-login: /
   # Bootstrap: self-reported ratings are stamped with this season id.
   # TODO(verify): set the real current season id — the Blizzard sync will
   # own this fact when it arrives.

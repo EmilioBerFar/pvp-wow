@@ -49,19 +49,22 @@ final class JpaListingLifecycle implements ListingLifecycle {
     private final ListingCloser closer;
     private final EntityManager entityManager;
     private final TransactionTemplate transactions;
+    private final ReadOnlyTransactions reads;
 
     JpaListingLifecycle(ListingJpaRepository listings,
                          JoinRequestJpaRepository joinRequests,
                          CharacterJpaRepository characterRepository,
                          ListingCloser closer,
                          EntityManager entityManager,
-                         PlatformTransactionManager transactionManager) {
+                         PlatformTransactionManager transactionManager,
+                         ReadOnlyTransactions reads) {
         this.listings = listings;
         this.joinRequests = joinRequests;
         this.characterRepository = characterRepository;
         this.closer = closer;
         this.entityManager = entityManager;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.reads = reads;
     }
 
     @Override
@@ -130,14 +133,14 @@ final class JpaListingLifecycle implements ListingLifecycle {
 
     @Override
     public Optional<LfgListing> findListing(ListingId listingId) {
-        return listings.findById(listingId.value())
-                .map(ListingEntityMapper::toDomain);
+        return reads.read(() -> listings.findById(listingId.value())
+                .map(ListingEntityMapper::toDomain));
     }
 
     @Override
     public Optional<JoinRequest> findJoinRequest(JoinRequestId joinRequestId) {
-        return joinRequests.findById(joinRequestId.value())
-                .map(JoinRequestMapper::toDomain);
+        return reads.read(() -> joinRequests.findById(joinRequestId.value())
+                .map(JoinRequestMapper::toDomain));
     }
 
     @Override
@@ -155,13 +158,14 @@ final class JpaListingLifecycle implements ListingLifecycle {
     @Override
     public boolean hasPendingRequest(PlayerId ownerId, CharacterId requesterId,
                                       UUID listingId) {
-        return joinRequests.existsPending(ownerId.value(), listingId,
-                JoinRequestStatus.PENDING);
+        return reads.read(() -> joinRequests.existsPending(ownerId.value(), listingId,
+                JoinRequestStatus.PENDING));
     }
 
     @Override
     public int pendingRequestCount(PlayerId ownerId, Instant now) {
-        return joinRequests.countPending(ownerId.value(), JoinRequestStatus.PENDING, now);
+        return reads.read(() ->
+                joinRequests.countPending(ownerId.value(), JoinRequestStatus.PENDING, now));
     }
 
     private ListingEntity requireListing(ListingId listingId) {

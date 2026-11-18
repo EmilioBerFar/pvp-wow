@@ -34,6 +34,40 @@ docker compose up -d        # PostgreSQL 18 on :5432
 ./mvnw spring-boot:run      # the API on :8080
 ```
 
+There is **no dev mode**. Authentication is Battle.net, always: a player exists
+because somebody logged in, and the `sub` claim is what says who. There is no
+header that names a player, no fixture endpoint that creates one, and no way
+into the application that is not a real Battle.net account — because a
+deployed artifact with a "development only" door is one environment variable
+away from production.
+
+The application needs real OAuth2 credentials to start:
+
+```bash
+export BATTLE_NET_CLIENT_ID=...        # https://develop.battle.net
+export BATTLE_NET_CLIENT_SECRET=...
+./mvnw spring-boot:run
+```
+
+Register the redirect URI `{baseUrl}/login/oauth2/code/battle-net` in the
+Battle.net client, or the provider will refuse the callback.
+
+**Without those two variables the application does not start.** That is
+deliberate: an application that cannot authenticate should not pretend to be
+running. The boot fails naming the variable that is missing, instead of
+letting the operator discover it later as a broken login.
+
+The session cookie is `Secure` by default, because the session *is* the
+credential: a browser refuses to send it over plain HTTP. That means local
+development over `http://localhost` needs one extra variable:
+
+```bash
+export SESSION_COOKIE_SECURE=false     # only for local http:// development
+```
+
+Sessions live in PostgreSQL, not in the heap of the server, so a restart does
+not log everybody out and a second instance sees the sessions of the first.
+
 `mvnw verify` is the whole test suite: it runs the unit tests (fast, no
 Docker) and then the integration tests against a **real PostgreSQL** in a
 throwaway Testcontainers instance. The subject under test in the persistence
@@ -52,44 +86,49 @@ default to the values in `docker-compose.yml`. Nothing secret is committed.
 
 ### The API
 
+Signing in is a browser round trip, not a `curl` call: Battle.net redirects
+the browser, the callback exchanges the code for a token, and the answer is a
+session cookie. `curl` can join in once that cookie exists.
+
 ```bash
-# Sign up: the account that will own characters
-curl -X POST localhost:8080/api/players \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"Emilio","battleTag":"Emilio#12345"}'
-# → 201 {"id":"<player-uuid>"}; use that id as X-Player-Id from now on
+# Sign in: the browser goes to Battle.net and comes back with a session cookie.
+# Copy the cookie out of the browser's storage and put it in cookies.txt.
+open localhost:8080/oauth2/authorization/battle-net
 
 # Who am I
-curl localhost:8080/api/players/me -H 'X-Player-Id: <player-uuid>'
+curl -b cookies.txt localhost:8080/api/players/me
+# → 200 {"id":"<player-uuid>","battleTag":"emilio#12345"}
 
 # Register a character
-curl -X POST localhost:8080/api/characters \
-  -H 'Content-Type: application/json' -H 'X-Player-Id: <player-uuid>' \
+curl -X POST localhost:8080/api/characters -b cookies.txt \
+  -H 'Content-Type: application/json' \
   -d '{"name":"Frostbolt","realm":"Sanguino","region":"EU","wowClass":"MAGE",
        "specs":["MAGE_FROST"],"itemLevel":675,"ratings":{"2v2":1800}}'
 
 # Publish availability
-curl -X POST localhost:8080/api/listings \
-  -H 'Content-Type: application/json' -H 'X-Player-Id: <player-uuid>' \
+curl -X POST localhost:8080/api/listings -b cookies.txt \
+  -H 'Content-Type: application/json' \
   -d '{"characterId":"<uuid>","bracket":"3v3","spec":"MAGE_FROST",
        "languages":["ES"],
        "schedule":{"zone":"Europe/Madrid",
                    "windows":[{"day":"MONDAY","start":"18:00","end":"22:00"}]}}'
 
-# Read the board (newest first, keyset paginated)
+# Read the board (newest first, keyset paginated) — no session needed
 curl 'localhost:8080/api/board?region=EU&bracket=3v3&minRating=1800&limit=20'
 
 # Ask to join, and the owner's answer
-curl -X POST localhost:8080/api/listings/<listing-id>/join-requests \
-  -H 'Content-Type: application/json' -H 'X-Player-Id: <player-uuid>' \
+curl -X POST localhost:8080/api/listings/<listing-id>/join-requests -b cookies.txt \
+  -H 'Content-Type: application/json' \
   -d '{"characterId":"<uuid>"}'
-curl -X POST localhost:8080/api/join-requests/<id>/accept -H 'X-Player-Id: <owner-uuid>'
+curl -X POST localhost:8080/api/join-requests/<id>/accept -b cookies.txt
+
+# Log out: the session, and with it the identity, is gone
+curl -X POST localhost:8080/api/auth/logout -b cookies.txt
 ```
 
-`X-Player-Id` is a development stub for authentication: it is a claim, and the
-adapter verifies that the player it names exists. Battle.net OAuth (the next
-work unit) replaces the **only** adapter that will change; the port, the use
-cases and the domain never learn the difference.
+The board is the only public endpoint. Everything else answers an unauthenticated
+call with a 401 `application/problem+json`, never a redirect: a `fetch()` that
+follows a redirect would get an HTML login page instead of a status it can read.
 
 ---
 
@@ -137,18 +176,20 @@ com.pvpwow.lfg
 │   ├── character   Character, GearSnapshot, PvpStanding, Bracket, WowClass…
 │   ├── listing     LfgListing, AvailabilitySchedule, TimeWindow, ListingOutcome
 │   ├── join        JoinRequest (the group handshake)
-│   ├── player      Player, BattleTag, Username
+│   ├── player      Player, BattleTag, BattleNetId
 │   └── synergy     SynergyTable (data, not behaviour)
 ├── application     use cases and ports
-│   ├── port.in     RegisterCharacter, PublishListing, SearchBoard,
-│   │               GetCharacter, RequestToJoin, AcceptJoinRequest,
-│   │               RejectJoinRequest, WithdrawJoinRequest, WithdrawListing
+│   ├── port.in     SignInWithBattleNet, GetCurrentPlayer, RegisterCharacter,
+│   │               PublishListing, SearchBoard, GetCharacter, RequestToJoin,
+│   │               AcceptJoinRequest, RejectJoinRequest, WithdrawJoinRequest,
+│   │               WithdrawListing
 │   ├── port.out    Characters, Listings, BoardListings, ListingLifecycle,
-│   │               Seasons, CurrentPlayerProvider
+│   │               Players, Seasons, CurrentPlayerProvider
 │   ├── service     the orchestration, one per use case
-│   └── error       ResourceNotFoundException
+│   └── error       ResourceNotFoundException, UnauthorizedException
 └── adapters
     ├── in.rest     controllers, DTOs, error advice
+    ├── in.security the filter chain and the Battle.net success handler
     └── out         persistence · security · season · synergy
 ```
 
@@ -295,8 +336,8 @@ The rules the suite follows:
 
 - [WU17] real players: a `players` table, sign-up with a battle tag, and the
   foreign key that makes `characters.owner_id` a real owner.
-- [WU18] Battle.net OAuth2: log in, create or recover the same player, and
-  retire the development header.
+- [WU18] Battle.net OAuth2: the session *is* the identity, the handle retired,
+  the dev header deleted, and a player exists only because somebody logged in.
 - [WU19] the Blizzard import: your real characters, with their observed class,
   specialization, rating and item level.
 - [WU20] the React client: board, publish, request, accept.
@@ -310,8 +351,8 @@ The working list, with the reasoning behind every decision, lives in
 
 ## Status
 
-Phase 1, no frontend yet. The API is complete for the main flow: sign up as a
-player, register a character, publish availability, browse the board with
-filters and pagination, ask to join, accept, reject, withdraw. Authentication
-is still a development header (the player it names must exist); Battle.net
-OAuth is the next step. The Blizzard API is not integrated yet.
+Phase 1, no frontend yet. The API is complete for the main flow: sign in with
+Battle.net, register a character, publish availability, browse the board with
+filters and pagination, ask to join, accept, reject, withdraw. The board is
+public; everything else needs a session. The Blizzard API is not integrated
+yet, and the React client does not exist.

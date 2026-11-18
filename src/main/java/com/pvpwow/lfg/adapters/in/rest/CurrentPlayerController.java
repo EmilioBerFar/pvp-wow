@@ -32,11 +32,10 @@ public final class CurrentPlayerController {
         return PlayerResponse.from(getCurrentPlayer.get());
     }
 
-    record PlayerResponse(UUID id, String username, String battleTag) {
+    record PlayerResponse(UUID id, String battleTag) {
 
         static PlayerResponse from(Player player) {
-            return new PlayerResponse(player.id().value(),
-                    player.username().value(), player.battleTag().value());
+            return new PlayerResponse(player.id().value(), player.battleTag().value());
         }
     }
 }

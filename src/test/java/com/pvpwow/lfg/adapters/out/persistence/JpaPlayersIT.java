@@ -14,10 +14,10 @@ import com.pvpwow.lfg.domain.character.Realm;
 import com.pvpwow.lfg.domain.character.Region;
 import com.pvpwow.lfg.domain.character.Specialization;
 import com.pvpwow.lfg.domain.character.WowClass;
+import com.pvpwow.lfg.domain.player.BattleNetId;
 import com.pvpwow.lfg.domain.player.BattleTag;
 import com.pvpwow.lfg.domain.player.Player;
 import com.pvpwow.lfg.domain.player.PlayerId;
-import com.pvpwow.lfg.domain.player.Username;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,10 +40,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The players table and the foreign key it enables, against the REAL database.
- * The point of the unit is the rule "a character has an owner that exists", and
- * that rule is enforced by Postgres, not by a service: an H2 imitation would
- * pass and still lie.
+ * The players table and the rules it carries, against the REAL database: one
+ * Battle.net account is one player, a battle tag is NOT unique because
+ * Blizzard reclaims them, a player cannot exist without an account, and a
+ * character's owner must exist. An H2 imitation would pass and still lie about
+ * a partial unique index and a NOT NULL column.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @Testcontainers
@@ -61,6 +62,7 @@ class JpaPlayersIT {
     }
 
     private static final Instant OBSERVED_AT = Instant.parse("2026-11-01T10:00:00Z");
+    private static final BattleNetId ACCOUNT = new BattleNetId("123456789");
 
     @Autowired
     private Players players;
@@ -79,29 +81,49 @@ class JpaPlayersIT {
     }
 
     @Test
-    void savesAndRehydratesTheAccount() {
-        Player player = Player.register(new Username("Emilio"),
-                new BattleTag("Emilio#12345"));
+    void savesAndRehydratesTheLinkedAccount() {
+        Player player = Player.register(ACCOUNT, new BattleTag("Emilio#12345"));
 
         players.save(player);
 
         Player rehydrated = players.findById(player.id()).orElseThrow();
         assertThat(rehydrated.id()).isEqualTo(player.id());
-        assertThat(rehydrated.username())
-                .as("the display casing of the handle is preserved")
-                .isEqualTo(new Username("Emilio"));
+        assertThat(rehydrated.battleNetId()).isEqualTo(ACCOUNT);
         assertThat(rehydrated.battleTag()).isEqualTo(new BattleTag("emilio#12345"));
     }
 
     @Test
-    void findingAnUnknownPlayerReturnsEmpty() {
-        assertThat(players.findById(new PlayerId(UUID.randomUUID()))).isEmpty();
+    void findsThePlayerByBattleNetId() {
+        Player player = Player.register(ACCOUNT, new BattleTag("Emilio#12345"));
+        players.save(player);
+
+        assertThat(players.findByBattleNetId(ACCOUNT)).contains(player);
+        assertThat(players.findByBattleNetId(new BattleNetId("999"))).isEmpty();
+    }
+
+    @Test
+    void twoPlayersMayCarryTheSameBattleTag() {
+        Player first = Player.register(ACCOUNT, new BattleTag("emilio#12345"));
+        Player second = Player.register(new BattleNetId("999"), new BattleTag("emilio#12345"));
+
+        players.save(first);
+        players.save(second);
+
+        assertThat(countIn("players")).isEqualTo(2);
+    }
+
+    @Test
+    void theColumnRefusesAPlayerWithoutAnAccount() {
+        assertThatThrownBy(() -> jdbc.update(
+                "insert into players (id, battle_net_id, battle_tag) values (?, ?, ?)",
+                UUID.randomUUID(), null, "emilio#12345"))
+                .as("a player without a Battle.net account cannot exist")
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     void savingTheSamePlayerTwiceUpdatesInsteadOfDuplicating() {
-        Player player = Player.register(new Username("emilio"),
-                new BattleTag("emilio#12345"));
+        Player player = Player.register(ACCOUNT, new BattleTag("emilio#12345"));
 
         players.save(player);
         players.save(player);
@@ -110,41 +132,18 @@ class JpaPlayersIT {
     }
 
     @Test
-    void theTakenChecksSeeThroughUsernameCasingButNotBattleTagCasing() {
-        players.save(Player.register(new Username("Emilio"), new BattleTag("Emilio#12345")));
+    void theIndexRejectsASecondPlayerForTheSameBattleNetAccount() {
+        players.save(Player.register(ACCOUNT, new BattleTag("emilio#12345")));
 
-        assertThat(players.usernameTaken(new Username("emilio"))).isTrue();
-        assertThat(players.usernameTaken(new Username("someone"))).isFalse();
-        assertThat(players.battleTagTaken(new BattleTag("EMILIO#12345")))
-                .as("the value object folds the tag before it reaches the query")
-                .isTrue();
-    }
-
-    @Test
-    void theIndexRejectsADuplicateUsernameInAnotherCase() {
-        players.save(Player.register(new Username("Emilio"), new BattleTag("someone#1234")));
-
-        assertThatThrownBy(() -> players.save(Player.register(
-                new Username("emilio"), new BattleTag("other#1234"))))
-                .as("the pre-check is UX; the functional index is the law")
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void theIndexRejectsADuplicateBattleTag() {
-        players.save(Player.register(new Username("someone"), new BattleTag("emilio#12345")));
-
-        assertThatThrownBy(() -> players.save(Player.register(
-                new Username("emilio"), new BattleTag("Emilio#12345"))))
-                .as("one Battle.net account is one player")
+        assertThatThrownBy(() -> players.save(
+                Player.register(ACCOUNT, new BattleTag("someoneelse#1234"))))
+                .as("the login lookup is UX; the unique index is the law")
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     /**
-     * The whole point of WU17. Before this migration the owner id was a claim
-     * the database could not check; now a character whose owner does not exist
-     * is refused at the FK, even though the constraint is NOT VALID for the
-     * rows that predate the players table.
+     * The rule WU17 introduced and WU18 kept: a character whose owner does not
+     * exist is refused at the foreign key, not by a service that might forget.
      */
     @Test
     void aCharacterCannotBeSavedForAnOwnerThatIsNotAPlayer() {

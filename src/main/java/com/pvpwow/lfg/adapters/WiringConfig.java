@@ -5,11 +5,11 @@ import com.pvpwow.lfg.application.port.in.GetCharacter;
 import com.pvpwow.lfg.application.port.in.GetCurrentPlayer;
 import com.pvpwow.lfg.application.port.in.PublishListing;
 import com.pvpwow.lfg.application.port.in.RegisterCharacter;
-import com.pvpwow.lfg.application.port.in.RegisterPlayer;
 import com.pvpwow.lfg.application.port.in.RejectJoinRequest;
 import com.pvpwow.lfg.application.port.in.RequestToJoin;
 import com.pvpwow.lfg.application.port.in.RunRetentionSweep;
 import com.pvpwow.lfg.application.port.in.SearchBoard;
+import com.pvpwow.lfg.application.port.in.SignInWithBattleNet;
 import com.pvpwow.lfg.application.port.in.WithdrawJoinRequest;
 import com.pvpwow.lfg.application.port.in.WithdrawListing;
 import com.pvpwow.lfg.application.port.out.BoardListings;
@@ -25,11 +25,11 @@ import com.pvpwow.lfg.application.service.GetCharacterService;
 import com.pvpwow.lfg.application.service.GetCurrentPlayerService;
 import com.pvpwow.lfg.application.service.PublishListingService;
 import com.pvpwow.lfg.application.service.RegisterCharacterService;
-import com.pvpwow.lfg.application.service.RegisterPlayerService;
 import com.pvpwow.lfg.application.service.RejectJoinRequestService;
 import com.pvpwow.lfg.application.service.RequestToJoinService;
 import com.pvpwow.lfg.application.service.RetentionSweepService;
 import com.pvpwow.lfg.application.service.SearchBoardService;
+import com.pvpwow.lfg.application.service.SignInWithBattleNetService;
 import com.pvpwow.lfg.application.service.WithdrawJoinRequestService;
 import com.pvpwow.lfg.application.service.WithdrawListingService;
 import org.springframework.beans.factory.annotation.Value;
@@ -61,8 +61,8 @@ public class WiringConfig {
     }
 
     @Bean
-    RegisterPlayer registerPlayer(Players players) {
-        return new RegisterPlayerService(players);
+    SignInWithBattleNet signInWithBattleNet(Players players) {
+        return new SignInWithBattleNetService(players);
     }
 
     @Bean

@@ -233,7 +233,8 @@ The JSON file and the catalog port are NOT yours — that is the adapter step.
 | Controller | `adapters.in.rest` | `POST /api/characters` → 201 + `Location` + `{id}` |
 | Request DTO | `adapters.in.rest` | `RegisterCharacterRequest.toCommand()` — the adapter cost of option C: declared strings become VOs HERE, invalid ones die HERE (422), the use case never sees them. Bracket keys are friendly (`2v2`, `3v3`); everything else uses enum names, case-insensitive |
 | Advice | `adapters.in.rest` | `ApiErrorHandling` — the error strategy as code: DomainRuleViolation → 422 ProblemDetail + DEBUG log; Unauthorized → 401; malformed body → 400; unexpected → 500 + generic detail + the first ERROR log of the codebase. Spring's own framework errors pass through with their own status |
-| Dev auth | `adapters.out.security` | `DevCurrentPlayerProvider` reads `X-Player-Id` via the request context; missing/garbage/no-context → `UnauthorizedException` |
+| Dev auth | `adapters.out.security` | `DevCurrentPlayerProvider` reads `X-Player-Id` via the request context; missing/garbage/no-context → `UnauthorizedException`. Since WU18 it is `@Profile("dev")` only |
+| Real auth | `adapters.in.security` + `adapters.out.security` | The OAuth2 filter chain, `BattleNetSignInHandler` (claims → player → session) and `SessionCurrentPlayerProvider` (session → `PlayerId`); active in every profile except `dev` |
 | Season config | `adapters.out.season` | `ConfigSeasons` — `pvp.current-season` property, bootstrap-only |
 | Bootstrap persistence | `adapters.out.persistence` | `InMemoryCharacters` — stand-in so the app runs end to end BEFORE the database exists; **replaced by `JpaCharacters` in WU9** |
 | Wiring | `adapters` | `WiringConfig` — the composition root: the ONLY place a framework-free application service becomes a bean. It speaks PORTS, never adapter classes |
@@ -837,6 +838,260 @@ to make the Battle.net login of WU18 a drop-in replacement, not a rewrite.
   `PlayerFlowIT` (sign-up → `/me` → register a character, all through the real
   adapter and the real database).
 
+## WU18 - Battle.net OAuth2
+
+WU17 made the player a row. It did not make "who is calling" true: the header
+was a claim the server could only check against the players table, so anybody
+holding a player id could speak as that player. This unit replaces the claim
+with a login and retires the field the claim lived in.
+
+This unit was reviewed and hardened before it landed. The corrections are part
+of the decision, not an amendment to it: the development adapters are DELETED
+rather than parked behind a profile, a player cannot exist without a Battle.net
+account, and the battle tag is contact data instead of an identity. The
+readers of the earlier WU17 sections will find `X-Player-Id` described there;
+that is what was true at the time, and the point of the spec is to record the
+journey, not to hide it. What is true NOW is in this section.
+
+- **The backend is a confidential client, and the session is the credential.**
+  The authorization-code flow runs on the server: the browser is redirected,
+  Battle.net returns a code, the backend exchanges it using the client secret,
+  and the result is an `HttpSession` cookie. The alternatives were considered
+  and refused: a self-issued JWT would mean owning signing keys, rotation and
+  revocation (a real logout stops being free) to solve a scaling problem this
+  product does not have - retention already assumed a single instance; and a
+  public SPA client would put a Battle.net access token in JavaScript, where
+  any XSS becomes an account takeover, plus one upstream call per request or a
+  cache nobody asked for. The session is the honest shape of "one server, one
+  browser".
+- **Identity is the Battle.net `sub`, not the battle tag.** A battle tag can be
+  renamed - Battle.net sells the service - and keying the account on it would
+  turn a rename into a new player with none of the old player's characters.
+  `battle_net_id` is stored next to the tag, never instead of it: the tag is
+  contact data the product needs, the id is the key that never moves.
+- **The handle is gone.** `username` existed to be a LOGIN identity, and its
+  unique index existed to stop two people choosing the same one. Once
+  Battle.net answers "who are you", the handle has no job and its index guards
+  a rule nobody states any more. Column, index, value object, `usernameTaken`
+  and `POST /api/players` all disappear with it. The account is now the battle
+  tag, which the provider hands over already verified.
+- **A login has two outcomes, and the order is the rule.**
+  `SignInWithBattleNetService` asks: does this ACCOUNT exist (recover it, and
+  rewrite the tag if it changed)? No (first login: create the player). There
+  used to be a third outcome - "this TAG exists without an account, claim that
+  row" - and it is gone, because a player without an account cannot exist any
+  more and because the battle tag is mutable: it cannot identify a row.
+- **A rename is not a new player.** If the provider reports a different tag for
+  a known account, the tag is rewritten on the same row. It never collides with
+  anybody: battle tags are not unique, so the rewrite is a plain update.
+- **Only the board is public.** `GET /api/board` needs no session: it is the
+  product, it shows nothing private, and requiring a login to look at it would
+  require an account to decide whether the board is worth an account.
+  Everything else requires a session. The login handshake itself
+  (`/oauth2/**`, `/login/**`) and the container's `/error` dispatch are exempt
+  for obvious reasons.
+- **An unauthenticated API call gets a 401, never a redirect.** Spring's OAuth2
+  support defaults to redirecting the browser to the provider, which is right
+  for a website and wrong for a JSON API: a `fetch()` that follows the redirect
+  receives an HTML login page instead of a status it can branch on. A custom
+  entry point writes `application/problem+json` in the filter chain, before any
+  message converter exists, which is why the four fields are assembled by hand.
+  The redirect still exists; it is just explicit, at
+  `GET /oauth2/authorization/battle-net`.
+- **CSRF is disabled, on purpose, and the reason is the cookie.** The session
+  cookie is `SameSite=Lax`, so a cross-site POST arrives without it and is
+  anonymous; and no state-changing route is a GET, so Lax's one hole (top-level
+  GET navigation) has nothing to exploit. `Strict` would have been stronger and
+  would have broken the flow: the OAuth callback is a cross-site GET navigation
+  that must carry the session holding the pending authorization request. This
+  is the decision to revisit in WU20, when the SPA gets its own origin and the
+  cookie becomes cross-site - at that point CSRF protection comes back.
+- **THE GET HALF OF THAT PROMISE IS CHECKED BY THE BUILD.** A cookie attribute
+  is a browser's promise; a route is ours, and a route can change by
+  accident. One `@GetMapping` that saves something and the promise breaks.
+  `GetEndpointsDoNotChangeStateTest` is a STRUCTURAL rule: ArchUnit reads the
+  bytecode and the annotations and answers "could this method possibly
+  write?", not "did it write?". It has two halves: a GET handler must not CALL
+  a writing method, and it must not even DEPEND ON a writing port, because a
+  dependency is one refactor away from a call. The writing methods of this
+  project are recognised by name - `save`, `publish`, `delete`, `expire`,
+  `complete`, `withdraw`, `close` - and the reading ones (`find`, `has`,
+  `current`, `already`, `pending`, `count`) win over them. That list lives in
+  one place, so adding a writing method with a new name is a decision somebody
+  has to make in the test rather than a silent hole.
+  The honest limit: a static rule cannot follow a call through a service into
+  a repository. That is why the RUNTIME half exists too - the read paths run
+  in a `READ ONLY` transaction and PostgreSQL refuses the write. Structure
+  catches the mistake before the code runs; the database refuses it if the
+  structure is wrong.
+  The rule was verified to BITE: a GET that called `Players.save` was written
+  on purpose, and the build failed naming the handler and the method.
+- **The read paths run in a transaction the database opened as READ ONLY.**
+  `ReadOnlyTransactions` is the one place that builds it: a
+  `TransactionTemplate` with `setReadOnly(true)`, which the PostgreSQL driver
+  turns into `BEGIN READ ONLY` (its default `readOnlyMode` is `transaction`).
+  An explicit write inside it is rejected by the database itself with
+  `cannot execute INSERT in a read-only transaction`.
+  It is a class and not an annotation because the adapters are `final` by
+  convention and `@Transactional` needs a proxy.
+  Two things this buys, and the second one is not about safety at all: the
+  database refuses an accidental write, AND the board query - five
+  statements - sees ONE snapshot. Without a transaction those five ran in
+  auto-commit, each in its own snapshot, so two of them could see two
+  different versions of the database.
+  A read-only transaction that finds an existing transaction JOINS it, so
+  asking a question while writing (`hasActiveFor` inside `publish`) still
+  works: the inner flag is ignored and the outer transaction rules.
+  `ReadOnlyTransactionsIT` pins the promise empirically - it asks the
+  database to write and checks that the DATABASE says no. A flag that
+  silently stopped reaching the driver would leave the suite green and the
+  promise broken.
+- **The application does not START without the Battle.net client.** An
+  application that cannot authenticate should not pretend to be running.
+  WU18 shipped with a `not-configured` placeholder, which meant the
+  application booted happily and the LOGIN failed - the operator saw a broken
+  login and had to guess that the client was never configured.
+  The reason a YAML default could not do the job: Spring Boot resolves a
+  missing `${BATTLE_NET_CLIENT_ID}` by leaving the placeholder TEXT in place
+  (`resolvePlaceholders`, not `resolveRequiredPlaceholders`), so the client
+  registration was built with a literal `${BATTLE_NET_CLIENT_ID}` as its id.
+  A default is a value that LOOKS like a credential and is not one.
+  So the check is explicit: `BattleNetClientConfiguration` refuses a value
+  that is empty or still an unresolved placeholder, and the boot fails with
+  the name of the variable in the message. The same pattern the TTL and the
+  retention window already use: a misconfiguration must kill the boot, not
+  the first request.
+- **The development adapters are DELETED, and that is the user's decision, not
+  an accident.** `DevCurrentPlayerProvider`, `DevSecurityConfig`,
+  `DevPlayersController`, `RegisterDevPlayer` and `RegisterDevPlayerService`
+  are gone from the codebase, together with their tests. The reason, in the
+  user's own words: **we do not want anything in the deployed artifact that
+  lets somebody impersonate a player.** A `@Profile("dev")` backdoor was the
+  previous answer, and a profile is a mitigation rather than a guarantee: it is
+  one environment variable a deployment happens to carry away from being
+  production. The only way to be sure is for the code not to be there. There is
+  no `dev` profile any more, no `X-Player-Id` header, and no
+  `POST /api/dev/players`.
+  The tests that used the header now sign in the way production does:
+  `oauth2Login()` for the provider handshake plus the internal player id in the
+  session, which is exactly the pair the real filter chain and the real
+  adapter need.
+- **A player exists only because somebody logged in with Battle.net.** The
+  `sub` claim is the identity; the battle tag is contact data that the board
+  shows and that the login refreshes every time. `battle_net_id` is NOT NULL
+  and there is no second door: `Player.registerWithoutAccount`,
+  `Player.rehydrateUnlinked` and `Player.linkTo` are deleted, and so is the
+  "claim by battle tag" branch of `SignInWithBattleNetService`. A login has
+  two outcomes now, not three: the account comes back (and its tag is
+  refreshed if it changed), or the player is born.
+  The reason is not tidiness: the application has never been deployed, so there
+  are no historical rows to protect, and the battle tag is MUTABLE. It cannot
+  be an identity - Blizzard reclaims battle tags and two accounts can carry the
+  same one - so keying a player on it would turn a rename into a second human.
+  A login without a `sub` is a 401: a provider that answers without it cannot
+  identify anybody, and guessing would be inventing identity.
+- **The `sub` is stored verbatim, as a string.** OpenID Connect defines `sub` as
+  a string, and today's Battle.net happens to send digits. A `bigint` column
+  would be a promise the provider never made, and a broken one costs every
+  account already stored; it would also turn a non-numeric `sub` into a
+  `NumberFormatException` and a 500 where the answer should be a 401. The
+  column is `text`, and the value object stores the claim as it arrives.
+- **The battle tag is NOT unique any more.** Blizzard reclaims battle tags, so
+  the old unique index would have rejected a perfectly legitimate pair of
+  players. The index becomes a plain one: the tag is searchable contact data,
+  never an identity, and a rename never collides with anybody.
+- **V6 is rewritten, not amended.** The migration has never been committed or
+  applied anywhere, so it is edited into its final shape instead of leaving a
+  nullable column and a follow-up migration to fix it: `battle_net_id` is
+  `text not null` from the start, and the battle tag index loses its
+  uniqueness in the same migration.
+- **The Battle.net token lives in the session and dies with it.** Nothing
+  sensitive reaches the database and there is no key to rotate. WU19 imports
+  characters only while the player is signed in, which is when they ask for it.
+  A background sync would need a stored, encrypted refresh token - the most
+  dangerous piece of the whole project - and it is deliberately not built.
+- **The session is a row in the database, not an object in the heap.** While it
+  lived in memory, a deploy logged everybody out and a second instance could
+  not see the sessions of the first. The session IS the credential, so the one
+  thing that must survive a deploy is the credential; a rolling restart is a
+  normal thing to do to a server. Spring Session JDBC keeps it in the database
+  we already have, in `spring_session` and `spring_session_attributes` (V7).
+  The schema is COPIED into the migration rather than letting the application
+  run Spring Session's own script: the rule in this project is that Flyway
+  owns the schema, and `spring.session.jdbc.initialize-schema: never` keeps
+  that promise from the other side. A table the application can create is a
+  table two versions of the application can disagree about.
+  The dependency is `spring-boot-starter-session-jdbc`, NOT the bare
+  `org.springframework.session:spring-session-jdbc` jar: Boot 4 split its
+  auto-configurations into modules, and adding only the Spring Session jar
+  leaves the application with NO `SessionRepository` at all - the session then
+  quietly stays in the heap, and the tests pass while proving nothing.
+- **The session cookie is `Secure` by default.** `SESSION_COOKIE_SECURE`
+  defaults to `true`, so a deployment that forgets to configure it does not
+  hand the credential out over plain HTTP. The cost is honest and visible:
+  local development over `http://localhost` needs
+  `SESSION_COOKIE_SECURE=false`, because a browser refuses to send a `Secure`
+  cookie over plain HTTP. That is the right way round: the insecure setting
+  has to be asked for by name.
+- **One constant holds the session attribute.** `BattleNetSignInHandler` writes
+  `pvp.current-player-id`, `SessionCurrentPlayerProvider` reads it, and both use
+  `SessionCurrentPlayerProvider.PLAYER_ID_ATTRIBUTE`. Two strings with the same
+  spelling drift; one constant with two readers cannot. The attribute holds a
+  `UUID`, not the `PlayerId` record, so the session stays serializable - and
+  Spring Session serializes it as bytes, which is why the test that proves the
+  session is persisted has to deserialize it to check it.
+- **The handler converts claims, not identities.** It reads `sub` and
+  `battletag` (falling back to `preferred_username`), and if either is missing
+  it answers 401 instead of guessing: an account id invented at the edge would
+  be fabricated identity, the same sin the FK backfill refused to commit. Both
+  values are read as strings because Jackson binds a JSON number to an
+  `Integer` and Battle.net has used both shapes. A `sub` that is blank is also
+  a 401, for the same reason.
+- **No discovery document.** The provider's endpoints are configured
+  explicitly instead of `issuer-uri`, so application startup does not depend on
+  reaching Battle.net. A test run has no business calling a third party.
+- **V6 is a plain schema change, not a two-step one.** There is no new foreign
+  key here, so there is nothing to validate: add the `battle_net_id` column,
+  put a unique index on it, drop the username index, drop the column, and drop
+  the battle tag's uniqueness.
+- **A known, bounded race.** Two callbacks arriving at once for a first-time
+  account can both find nothing and both insert; the unique index rejects the
+  loser, and that request fails while the retry wins. It is left visible rather
+  than hidden: the honest fix is an `insert ... on conflict` upsert in the
+  adapter, which is a change worth making when a real user reports it, not
+  before.
+- **Tests.** `SignInWithBattleNetServiceTest` (create, recover, rename, two
+  accounts sharing a battle tag), `BattleNetSignInHandlerTest` (claims →
+  session, numeric `sub`, non-numeric `sub` kept verbatim, fallback claim,
+  refusal without claims or with a blank one),
+  `SessionCurrentPlayerProviderTest` (session attribute, missing attribute, no
+  request), `JpaPlayersIT` (the unique index on the account id, two players
+  with the same battle tag, the NOT NULL column, the FK),
+  `JdbcSessionIT` (the session is a row in PostgreSQL, it carries the player
+  id, its attributes die with it),
+  `PlayerFlowIT` (a signed-in player end to end, with `oauth2Login()` plus the
+  internal player id), `SecurityIT` (public board, 401 problem+json, a
+  session reaching the use case),
+  `GetEndpointsDoNotChangeStateTest` (no GET can reach a writing port, and
+  the rule finds the ports it is supposed to find),
+  `ReadOnlyTransactionsIT` (the database refuses the write, the read works,
+  and the write outside the transaction still works),
+  `BattleNetClientConfigurationTest` (an empty or unresolved credential is
+  refused) and `MissingCredentialsIT` (the real application does not boot
+  without them). The WU17 tests that named a handle are gone with the handle,
+  and the dev tests are gone with the dev adapters.
+- **The tests sign in through a FILTER, not through a session object.** Spring
+  Session replaces the servlet session with its own, and its filter runs before
+  anything else. A `MockHttpSession` handed to MockMvc is a DIFFERENT session
+  from the one the adapter reads and from the one Spring Session persists, so
+  an attribute set on it lands in a session nobody ever looks at - and the
+  test passes while proving nothing. `AuthenticatedCaller` marks the request
+  with the player id and a filter, registered between Spring Session's filter
+  and Spring Security's chain, moves it into the session that counts.
+- **What the suite cannot prove.** The handshake with Battle.net itself. That
+  is a network round trip to a third party, and CI has no business making it;
+  everything on our side of the redirect is covered.
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
@@ -886,25 +1141,27 @@ wrong.
 
 The domain-phase exclusions — ports, repositories, use cases, controllers —
 are no longer excluded: that phase is complete. Still out of scope until their
-own steps: the Blizzard API client (sync step), real auth beyond the
-`X-Player-Id` stub, React.
+own steps: the Blizzard API client (sync step), stored Battle.net refresh
+tokens, CSRF protection for a cross-origin client, React.
 
 ## Next step
 
 WU12 (REST exposure, keyset pagination, bean wiring and the configured TTL),
 WU13 (read your own character, with total anti-enumeration), WU14 (declared
 presence + a blank generic 500), WU15 (the group handshake and the facts of a
-finished listing), WU16 (the daily retention sweep) and WU17 (real players and
-the owner foreign key) are done.
+finished listing), WU16 (the daily retention sweep), WU17 (real players and the
+owner foreign key) and WU18 (Battle.net login and the session that carries it)
+are done.
 
-Next: WU18 — Battle.net OAuth2 replaces the `X-Player-Id` stub. Logging in
-creates or recovers the same `Player` aggregate, so only the
-`CurrentPlayerProvider` adapter changes; that is the hexagonal architecture
-paying its debt.
+Next: WU19 — import characters and their observed facts from Blizzard. The
+access token is already in the session (scope `wow.profile` was requested at
+login), so the import is a use case the signed-in player triggers; nothing has
+to be stored to make it possible.
 
-Then: WU19 (import characters and their observed facts from Blizzard), WU20
-(the React client: board, publish, request, accept) and WU21 (a public
-deployment for the CV).
+Then: WU20 (the React client: board, publish, request, accept) and WU21 (a
+public deployment for the CV). WU20 owns two debts this unit left explicit:
+CSRF protection once the cookie becomes cross-site, and the login redirect that
+currently points at `/`.
 
 Still open afterwards: the lobby with chat (it needs a Group entity, which
 does not exist yet) and a listing read-by-id resource.

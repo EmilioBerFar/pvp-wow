@@ -1,20 +1,22 @@
 package com.pvpwow.lfg.application.port.out;
 
-import com.pvpwow.lfg.domain.player.BattleTag;
+import com.pvpwow.lfg.domain.player.BattleNetId;
 import com.pvpwow.lfg.domain.player.Player;
 import com.pvpwow.lfg.domain.player.PlayerId;
-import com.pvpwow.lfg.domain.player.Username;
 
 import java.util.Optional;
 
 /**
  * Driven port: player persistence.
  *
- * <p>The two "taken" questions exist for the SAME reason the character
- * duplicate check exists: the database index is the law, and this is the
- * friendly answer the caller gets before hitting it. A concurrent registration
- * can still race past both checks; the index, not the service, is what keeps
- * the data correct.
+ * <p>Two ways to find one row, because two callers ask two different
+ * questions: "who is calling" (by our id) and "has this Battle.net account
+ * been here before" (by the account id). Each one is answered by an index;
+ * neither of them scans the table.
+ *
+ * <p>There is no lookup by battle tag on purpose: the tag is mutable and NOT
+ * unique (Blizzard reclaims them), so it cannot identify a row. It is contact
+ * data the product shows, nothing more.
  */
 public interface Players {
 
@@ -22,16 +24,5 @@ public interface Players {
 
     Optional<Player> findById(PlayerId id);
 
-    /**
-     * Case-insensitive, because a login handle is not a display name: two
-     * players asking for {@code Emilio} and {@code emilio} want the same
-     * handle, and only one can have it.
-     */
-    boolean usernameTaken(Username username);
-
-    /**
-     * Battle tags are already case-folded by the value object, so this is a
-     * plain equality check. One Battle.net account is one player.
-     */
-    boolean battleTagTaken(BattleTag battleTag);
+    Optional<Player> findByBattleNetId(BattleNetId battleNetId);
 }

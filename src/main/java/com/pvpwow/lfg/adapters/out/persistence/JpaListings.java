@@ -44,15 +44,18 @@ final class JpaListings implements Listings {
     private final ListingCloser closer;
     private final EntityManager entityManager;
     private final TransactionTemplate transactions;
+    private final ReadOnlyTransactions reads;
 
     JpaListings(ListingJpaRepository repository,
                 ListingCloser closer,
                 EntityManager entityManager,
-                PlatformTransactionManager transactionManager) {
+                PlatformTransactionManager transactionManager,
+                ReadOnlyTransactions reads) {
         this.repository = repository;
         this.closer = closer;
         this.entityManager = entityManager;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.reads = reads;
     }
 
     @Override
@@ -95,7 +98,13 @@ final class JpaListings implements Listings {
 
     @Override
     public boolean hasActiveFor(CharacterId characterId, Bracket bracket, Instant now) {
-        return repository.existsActive(characterId.value(), bracket, ListingStatus.ACTIVE, now);
+        // The read-only transaction joins an existing one when there is one -
+        // which is what happens inside publish() - so the flag of the inner
+        // template is ignored and the outer transaction rules. That is the
+        // right behaviour: publish() is writing, and this is a question asked
+        // while writing.
+        return reads.read(() ->
+                repository.existsActive(characterId.value(), bracket, ListingStatus.ACTIVE, now));
     }
 
     /**

@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -49,6 +50,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * malformed id must be byte-for-byte the same answer.
  */
 @WebMvcTest({GetCharacterController.class, PublishListingController.class})
+@AutoConfigureMockMvc(addFilters = false)
 @Import(GetCharacterControllerTest.FakeWiring.class)
 class GetCharacterControllerTest {
 

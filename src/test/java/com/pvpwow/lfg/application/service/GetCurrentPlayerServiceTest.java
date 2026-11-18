@@ -5,7 +5,7 @@ import com.pvpwow.lfg.application.port.out.Players;
 import com.pvpwow.lfg.domain.player.BattleTag;
 import com.pvpwow.lfg.domain.player.Player;
 import com.pvpwow.lfg.domain.player.PlayerId;
-import com.pvpwow.lfg.domain.player.Username;
+import com.pvpwow.lfg.domain.player.BattleNetId;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
@@ -22,7 +22,8 @@ class GetCurrentPlayerServiceTest {
 
     private static final PlayerId CALLER = new PlayerId(UUID.randomUUID());
     private static final Player PLAYER =
-            Player.rehydrate(CALLER, new Username("emilio"), new BattleTag("emilio#12345"));
+            Player.rehydrate(CALLER, new BattleNetId("123456789"),
+                    new BattleTag("emilio#12345"));
 
     private final FakePlayers players = new FakePlayers();
     private final GetCurrentPlayerService service =
@@ -57,13 +58,9 @@ class GetCurrentPlayerServiceTest {
         }
 
         @Override
-        public boolean usernameTaken(Username username) {
-            return false;
-        }
-
-        @Override
-        public boolean battleTagTaken(BattleTag battleTag) {
-            return false;
+        public Optional<Player> findByBattleNetId(BattleNetId battleNetId) {
+            return Optional.ofNullable(stored)
+                    .filter(player -> player.battleNetId().equals(battleNetId));
         }
     }
 }

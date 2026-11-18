@@ -1,11 +1,12 @@
 package com.pvpwow.lfg.adapters.in.rest;
 
-import com.jayway.jsonpath.JsonPath;
+import com.pvpwow.lfg.adapters.in.security.AuthenticatedCaller;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -25,15 +26,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The WU17 rule end to end, with the REAL header adapter and the REAL
- * database: a player signs up, the returned id becomes an identity, and a
- * header that names no player is refused BEFORE any use case runs.
+ * The player flow end to end, with the REAL filter chain and the REAL
+ * database: a signed-in player owns a character, and an anonymous caller is
+ * refused BEFORE any use case runs.
  *
- * <p>A web slice with a fake provider cannot prove this, because the rule lives
- * in the adapter it replaces.
+ * <p>There is no dev profile any more. The test signs in the way the product
+ * signs in - {@code oauth2Login()} for the provider handshake plus the
+ * internal player id in the session - so what is exercised here is the same
+ * path production takes.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@Import(AuthenticatedCaller.PlayerIdWiring.class)
 @Testcontainers
 class PlayerFlowIT {
 
@@ -64,17 +68,15 @@ class PlayerFlowIT {
     }
 
     @Test
-    void aPlayerSignsUpAndThenOwnsACharacter() throws Exception {
-        String playerId = signUp("Emilio", "Emilio#12345");
+    void aSignedInPlayerOwnsACharacter() throws Exception {
+        UUID playerId = insertPlayer();
 
-        mockMvc.perform(get("/api/players/me").header("X-Player-Id", playerId))
+        mockMvc.perform(AuthenticatedCaller.signedIn(get("/api/players/me"), playerId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(playerId))
-                .andExpect(jsonPath("$.username").value("Emilio"))
+                .andExpect(jsonPath("$.id").value(playerId.toString()))
                 .andExpect(jsonPath("$.battleTag").value("emilio#12345"));
 
-        mockMvc.perform(post("/api/characters")
-                        .header("X-Player-Id", playerId)
+        mockMvc.perform(AuthenticatedCaller.signedIn(post("/api/characters"), playerId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name": "Frostbolt", "realm": "Sanguino", "region": "EU",
@@ -86,56 +88,30 @@ class PlayerFlowIT {
     }
 
     @Test
-    void aHeaderThatNamesNoPlayerIsA401BeforeAnyUseCaseRuns() throws Exception {
-        mockMvc.perform(get("/api/players/me")
-                        .header("X-Player-Id", UUID.randomUUID().toString()))
-                .andExpect(status().isUnauthorized())
-                .andExpect(jsonPath("$.detail").value(containsString("Unknown player")));
+    void anAnonymousCallerIsA401BeforeAnyUseCaseRuns() throws Exception {
+        mockMvc.perform(get("/api/players/me"))
+                .andExpect(status().isUnauthorized());
 
         mockMvc.perform(post("/api/characters")
-                        .header("X-Player-Id", UUID.randomUUID().toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"name": "Frostbolt", "realm": "Sanguino", "region": "EU",
                                  "wowClass": "MAGE", "specs": ["MAGE_FROST"], "itemLevel": 675}
                                 """))
                 .andExpect(status().isUnauthorized());
-
-        mockMvc.perform(get("/api/players/me"))
-                .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void twoPlayersCannotShareAHandleOrABattleTag() throws Exception {
-        signUp("Emilio", "Emilio#12345");
-
-        mockMvc.perform(post("/api/players")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"username": "emilio", "battleTag": "other#12345"}
-                                """))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.detail").value(
-                        "Username 'emilio' is already taken"));
-
-        mockMvc.perform(post("/api/players")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"username": "someone", "battleTag": "EMILIO#12345"}
-                                """))
-                .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.detail").value(
-                        "Battle tag 'emilio#12345' is already registered"));
+    void aSessionThatNamesNoPlayerIsA401() throws Exception {
+        mockMvc.perform(AuthenticatedCaller.signedInWithoutAPlayer(get("/api/players/me")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.detail").value(containsString("Not signed in")));
     }
 
-    private String signUp(String username, String battleTag) throws Exception {
-        String body = mockMvc.perform(post("/api/players")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"username": "%s", "battleTag": "%s"}
-                                """.formatted(username, battleTag)))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        return JsonPath.read(body, "$.id");
+    private UUID insertPlayer() {
+        UUID playerId = UUID.randomUUID();
+        jdbc.update("insert into players (id, battle_net_id, battle_tag) values (?, ?, ?)",
+                playerId, "123456789", "emilio#12345");
+        return playerId;
     }
 }

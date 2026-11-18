@@ -30,6 +30,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -61,6 +62,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * wire, and the cursor really is opaque and round-trips.
  */
 @WebMvcTest(SearchBoardController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import(SearchBoardControllerTest.FakeWiring.class)
 class SearchBoardControllerTest {
 

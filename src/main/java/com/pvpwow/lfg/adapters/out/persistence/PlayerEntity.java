@@ -10,7 +10,16 @@ import java.util.UUID;
 /**
  * Relational shape of the Player aggregate. Three columns, and that is the
  * whole account: the aggregate has no temporal state, so neither does the
- * table. A {@code created_at} "just in case" would be a column nobody reads.
+ * table. A {@code created_at} "just a case" would be a column nobody reads.
+ *
+ * <p>{@code battleNetId} is a {@code String}, not a number: it stores the
+ * {@code sub} claim verbatim, because that is the shape OpenID Connect defines
+ * and the shape the provider sends. The column is NOT NULL because a player
+ * exists only because somebody logged in with Battle.net.
+ *
+ * <p>{@code battleTag} is deliberately not unique: Blizzard reclaims battle
+ * tags and two accounts can carry the same one, so it is contact data the
+ * product shows, never an identity.
  */
 @Entity
 @Table(name = "players")
@@ -19,8 +28,8 @@ class PlayerEntity {
     @Id
     private UUID id;
 
-    @Column(nullable = false, length = 24)
-    private String username;
+    @Column(name = "battle_net_id", nullable = false)
+    private String battleNetId;
 
     @Column(name = "battle_tag", nullable = false, length = 64)
     private String battleTag;
@@ -33,8 +42,8 @@ class PlayerEntity {
         return id;
     }
 
-    String username() {
-        return username;
+    String battleNetId() {
+        return battleNetId;
     }
 
     String battleTag() {
@@ -45,8 +54,8 @@ class PlayerEntity {
         this.id = id;
     }
 
-    void setUsername(String username) {
-        this.username = username;
+    void setBattleNetId(String battleNetId) {
+        this.battleNetId = battleNetId;
     }
 
     void setBattleTag(String battleTag) {

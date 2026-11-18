@@ -29,7 +29,7 @@ import java.util.stream.Collectors;
  *       traffic buries real signals.</li>
  *   <li>A missing resource and a resource the caller may not touch are both
  *       404 with the same detail, so the edge never reveals existence.</li>
- *   <li>Unauthorized (dev stub): 401.</li>
+ *   <li>Unauthorized (no session, or a session naming no player): 401.</li>
  *   <li>Malformed body or a cursor this API did not issue: 400.</li>
  *   <li>Bean Validation failures (a missing field): 422, same family as a
  *       domain rule violation. The framework's default would be 400, but a

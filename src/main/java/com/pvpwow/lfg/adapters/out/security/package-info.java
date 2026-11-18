@@ -1,6 +1,5 @@
 /**
- * Security adapter: dev stub resolving the current player from an X-Player-Id
- * header. Will be replaced by Battle.net OAuth without touching domain or
- * application code.
+ * Security adapter: the current player, resolved from the session the Battle.net
+ * login left behind.
  */
 package com.pvpwow.lfg.adapters.out.security;

@@ -41,13 +41,16 @@ final class JpaCharacters implements Characters {
     private final CharacterJpaRepository repository;
     private final EntityManager entityManager;
     private final TransactionTemplate transactions;
+    private final ReadOnlyTransactions reads;
 
     JpaCharacters(CharacterJpaRepository repository,
                   EntityManager entityManager,
-                  PlatformTransactionManager transactionManager) {
+                  PlatformTransactionManager transactionManager,
+                  ReadOnlyTransactions reads) {
         this.repository = repository;
         this.entityManager = entityManager;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.reads = reads;
     }
 
     @Override
@@ -64,11 +67,13 @@ final class JpaCharacters implements Characters {
 
     @Override
     public Optional<Character> findById(CharacterId id) {
-        return repository.findById(id.value()).map(CharacterEntityMapper::toDomain);
+        return reads.read(() ->
+                repository.findById(id.value()).map(CharacterEntityMapper::toDomain));
     }
 
     @Override
     public boolean alreadyRegistered(Region region, Realm realm, CharacterName name) {
-        return repository.existsIgnoringNameCase(region, realm.value(), name.value());
+        return reads.read(() ->
+                repository.existsIgnoringNameCase(region, realm.value(), name.value()));
     }
 }

@@ -12,9 +12,9 @@ import java.util.Objects;
  * GetCurrentPlayer, orchestrated. Two reads on purpose: the provider says WHO
  * is calling, this service proves that player still exists.
  *
- * <p>Defense in depth, not duplication. The dev header adapter already checks
- * existence, but the port contract does not promise it: a future OAuth adapter
- * could resolve a Battle.net id to a player row in another step. The
+ * <p>Defense in depth, not duplication. The session adapter checks that the
+ * session carries a player id, but the port contract does not promise that the
+ * player still exists: the row can be deleted while the session lives. The
  * application must never hand a nonexistent owner to a use case — the foreign
  * key would answer with a 500 instead of a 401.
  */

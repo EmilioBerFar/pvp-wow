@@ -43,6 +43,31 @@
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
 
+		<!-- Real authentication. The OAuth2 client starter already brings
+		     spring-boot-starter-security with it; adding both would only make
+		     the dependency tree lie about what is needed. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-oauth2-client</artifactId>
+		</dependency>
+
+		<!-- The session IS the credential, so it cannot live in the heap of a
+		     single instance: a restart would log everybody out, and a second
+		     instance would not see the sessions of the first. Spring Session
+		     JDBC keeps them in the database we already have, and the schema
+		     is a Flyway migration like every other table here - the
+		     application never creates tables by itself.
+
+		     The Boot starter, NOT the bare org.springframework.session jar:
+		     Boot 4 split its auto-configurations into modules, and the
+		     session one lives in spring-boot-session-jdbc. Adding only the
+		     Spring Session jar leaves the application with no SessionRepository
+		     at all, and the session quietly stays in the heap. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-session-jdbc</artifactId>
+		</dependency>
+
 		<!-- Boot 4 split the auto-configuration out of flyway-core: without the
 		     starter, Flyway never runs and `ddl-auto: validate` reports every
 		     table as missing. The database module is still required (Flyway 10+). -->
@@ -87,6 +112,13 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<!-- oauth2Login() and the session helpers the security tests drive the
+		     filter chain with, without a network round trip to Battle.net. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security-oauth2-client-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
