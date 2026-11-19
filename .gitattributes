@@ -1,2 +1,22 @@
+# The repository stores LF; the working tree gets LF too.
+#
+# WHY THIS FILE EXISTS: without it, git's core.autocrlf decides, and the
+# decision differs per machine. On a Windows clone with autocrlf=true every
+# checkout rewrites LF as CRLF, and then EVERY file looks modified - the diff
+# of a real change drowns in the diff of an invisible one. A review that
+# cannot be read is not a review.
+#
+# "text=auto eol=lf" says two things: git NORMALIZES the line endings when
+# it stores a file (so the repository only ever holds one spelling), and the
+# working tree gets LF as well. The file's content decides whether it is
+# text at all, so a binary file is still treated as binary.
+#
+# The two rules below are the exceptions, and they exist because those files
+# are EXECUTED on Windows: a batch file with LF endings does not run.
+# mvnw is the opposite case - a shell script that must keep LF, or it breaks
+# on every platform.
+
+* text=auto eol=lf
+
 /mvnw text eol=lf
 *.cmd text eol=crlf
