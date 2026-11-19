@@ -8,6 +8,7 @@ import com.pvpwow.lfg.application.port.out.BoardListings.BoardSlice;
 import com.pvpwow.lfg.application.port.out.BoardListings.SearchCriteria;
 import com.pvpwow.lfg.application.port.out.Seasons;
 import com.pvpwow.lfg.application.service.SearchBoardService;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
@@ -222,7 +223,7 @@ class SearchBoardControllerTest {
                 : Map.of(Bracket.TWO_VS_TWO,
                         new PvpStanding(new Rating(rating), SEASON, ratingObservedAt));
         Character character = Character.rehydrate(characterId, new PlayerId(UUID.randomUUID()),
-                new CharacterName("Frostbolt"), new Realm("sanguino"), Region.EU, WowClass.MAGE,
+                new BlizzardCharacterId(161996209L), new CharacterName("Frostbolt"), new Realm("sanguino"), Region.EU, WowClass.MAGE,
                 new GearSnapshot(new ItemLevel(675), gearObservedAt),
                 Set.of(Specialization.MAGE_FROST), standings);
         LfgListing listing = LfgListing.publish(characterId, Bracket.TWO_VS_TWO,

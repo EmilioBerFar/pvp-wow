@@ -45,7 +45,18 @@ spring:
             authorization-grant-type: authorization_code
             redirect-uri: "{baseUrl}/login/oauth2/code/{registrationId}"
             scope:
-              - openid
+              # NO 'openid'. That scope tells Spring Security to treat
+              # Battle.net as an OpenID Connect provider, and an OIDC provider
+              # is expected to return a signed id_token.
+              #
+              # The reason to leave it out is SIMPLICITY, not a fact about
+              # the provider: the product needs nothing from OpenID Connect.
+              # There is no id_token to validate, no JWKS to fetch and no
+              # issuer to check - the identity comes from /userinfo (the
+              # 'sub' and the 'battletag'), which 'user-name-attribute: sub'
+              # below already asks for. Without 'openid', Spring uses
+              # DefaultOAuth2UserService: the plain OAuth2 path.
+              #
               # Needed by WU19 (character import). Asking once is cheaper than
               # a second consent screen later.
               - wow.profile

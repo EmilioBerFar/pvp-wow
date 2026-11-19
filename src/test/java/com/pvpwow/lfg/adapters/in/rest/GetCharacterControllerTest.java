@@ -5,6 +5,7 @@ import com.pvpwow.lfg.application.port.in.GetCharacter;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.CurrentPlayerProvider;
 import com.pvpwow.lfg.application.service.GetCharacterService;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
@@ -154,7 +155,7 @@ class GetCharacterControllerTest {
     }
 
     private static Character characterOwnedBy(PlayerId owner) {
-        return Character.rehydrate(CHARACTER_ID, owner, new CharacterName("Frostbolt"),
+        return Character.rehydrate(CHARACTER_ID, owner, new BlizzardCharacterId(161996209L), new CharacterName("Frostbolt"),
                 new Realm("sanguino"), Region.EU, WowClass.MAGE,
                 new GearSnapshot(new ItemLevel(675), NOW),
                 Set.of(Specialization.MAGE_FROST),
@@ -236,10 +237,10 @@ class GetCharacterControllerTest {
         public Optional<Character> findById(CharacterId id) {
             return Optional.ofNullable(stored).filter(character -> character.id().equals(id));
         }
-
         @Override
-        public boolean alreadyRegistered(Region region, Realm realm, CharacterName name) {
-            return false;
+        public Optional<Character> findByBlizzardId(Region region,
+                                                         BlizzardCharacterId blizzardId) {
+            return Optional.empty();
         }
     }
 }

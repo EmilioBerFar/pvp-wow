@@ -3,6 +3,7 @@ package com.pvpwow.lfg.adapters.out.persistence;
 import com.pvpwow.lfg.application.port.out.BoardListings;
 import com.pvpwow.lfg.application.port.out.BoardListings.BoardSlice;
 import com.pvpwow.lfg.domain.character.Bracket;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -127,6 +128,7 @@ final class JdbcBoardListings implements BoardListings {
                        l.created_at,
                        l.expires_at,
                        c.owner_id,
+                       c.blizzard_character_id,
                        c.name,
                        c.realm,
                        c.region,
@@ -274,6 +276,7 @@ final class JdbcBoardListings implements BoardListings {
         return Character.rehydrate(
                 new CharacterId(row.characterId()),
                 new PlayerId(row.ownerId()),
+                new BlizzardCharacterId(row.blizzardCharacterId()),
                 new CharacterName(row.name()),
                 new Realm(row.realm()),
                 row.region(),
@@ -294,6 +297,7 @@ final class JdbcBoardListings implements BoardListings {
                 instant(rs, "created_at"),
                 instant(rs, "expires_at"),
                 rs.getObject("owner_id", UUID.class),
+                rs.getLong("blizzard_character_id"),
                 rs.getString("name"),
                 rs.getString("realm"),
                 Region.valueOf(rs.getString("region")),
@@ -320,6 +324,7 @@ final class JdbcBoardListings implements BoardListings {
             Instant createdAt,
             Instant expiresAt,
             UUID ownerId,
+            long blizzardCharacterId,
             String name,
             String realm,
             Region region,

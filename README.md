@@ -1,9 +1,13 @@
 # pvp-wow
 
-**LFG board for World of Warcraft arena PvP.** Players register their
-characters, publish their availability for a bracket (2v2 / 3v3), and other
-players ask to join them. When both sides agree, the search ends and the
+**LFG board for World of Warcraft arena PvP.** Players import their characters
+from Battle.net, publish their availability for a bracket (2v2 / 3v3), and
+other players ask to join them. When both sides agree, the search ends and the
 listing is recorded as completed.
+
+Every rating on the board was **observed**, not claimed: there is no way to
+insert a character by hand, so the numbers other players filter by are the
+numbers the game reported.
 
 Built as a learning project for **hexagonal architecture** on Spring Boot and
 PostgreSQL. Every product decision is argued in
@@ -99,11 +103,21 @@ open localhost:8080/oauth2/authorization/battle-net
 curl -b cookies.txt localhost:8080/api/players/me
 # → 200 {"id":"<player-uuid>","battleTag":"emilio#12345"}
 
-# Register a character
-curl -X POST localhost:8080/api/characters -b cookies.txt \
+# The characters of your Battle.net account (one region at a time)
+curl 'localhost:8080/api/characters/importable?region=EU' -b cookies.txt
+# → 200 [{"blizzardId":161996209,"name":"Strongem","realmSlug":"tarren-mill",
+#          "className":"Mage","level":70}]
+
+# Import the ones you choose. There is no other way to create a character:
+# every rating on the board was observed, not claimed. Note that the client
+# sends ONLY the id: the server checks it against your account, so nobody can
+# make it import somebody else's character.
+curl -X POST 'localhost:8080/api/characters/import?region=EU' -b cookies.txt \
   -H 'Content-Type: application/json' \
-  -d '{"name":"Frostbolt","realm":"Sanguino","region":"EU","wowClass":"MAGE",
-       "specs":["MAGE_FROST"],"itemLevel":675,"ratings":{"2v2":1800}}'
+  -d '{"characters":[{"blizzardId":161996209}]}'
+# → 200 {"imported":1,"refreshed":0,"skipped":0,"rejected":0,
+#         "outcomes":[{"name":"Strongem","realmSlug":"tarren-mill",
+#                      "outcome":"IMPORTED"}]}
 
 # Publish availability
 curl -X POST localhost:8080/api/listings -b cookies.txt \
@@ -174,23 +188,25 @@ It prints nothing. It must print nothing.
 com.pvpwow.lfg
 ├── domain          pure model: aggregates, value objects, domain rules
 │   ├── character   Character, GearSnapshot, PvpStanding, Bracket, WowClass…
-│   ├── listing     LfgListing, AvailabilitySchedule, TimeWindow, ListingOutcome
+│   ├── character   Character, BlizzardCharacterId, CharacterName, Realm,
+>│   │               Region, WowClass, Specialization, GearSnapshot, PvpStanding
+>   ├── listing     LfgListing, AvailabilitySchedule, TimeWindow, ListingOutcome
 │   ├── join        JoinRequest (the group handshake)
 │   ├── player      Player, BattleTag, BattleNetId
 │   └── synergy     SynergyTable (data, not behaviour)
 ├── application     use cases and ports
-│   ├── port.in     SignInWithBattleNet, GetCurrentPlayer, RegisterCharacter,
+│   ├── port.in     SignInWithBattleNet, GetCurrentPlayer, ImportCharacters,
 │   │               PublishListing, SearchBoard, GetCharacter, RequestToJoin,
 │   │               AcceptJoinRequest, RejectJoinRequest, WithdrawJoinRequest,
 │   │               WithdrawListing
 │   ├── port.out    Characters, Listings, BoardListings, ListingLifecycle,
-│   │               Players, Seasons, CurrentPlayerProvider
+│   │               Players, Seasons, CurrentPlayerProvider, BattleNetCharacters
 │   ├── service     the orchestration, one per use case
 │   └── error       ResourceNotFoundException, UnauthorizedException
 └── adapters
     ├── in.rest     controllers, DTOs, error advice
     ├── in.security the filter chain and the Battle.net success handler
-    └── out         persistence · security · season · synergy
+    └── out         persistence · security · season · synergy · blizzard
 ```
 
 `domain/listing/ListingOutcome` and `domain/join` are the two packages that
@@ -309,6 +325,60 @@ trace goes to the `ERROR` log, where the operator reads it. A caller who
 learns *which* failure happened learns something about the server's
 internals for free — and the request may be hostile.
 
+### 9. There is no way to invent a character
+
+`POST /api/characters` **does not exist**. A character can only come from the
+Battle.net import, and the Blizzard character id is **required** in the
+aggregate.
+
+The reason is trust: every rating on the board was **observed**, not claimed.
+A board where anybody can insert a character with any rating is a board
+nobody can filter by anything real. The cost is honest — a player cannot
+register a character for an alt that never logs in, and a character whose
+Blizzard account is gone stays on the board until the retention sweep reaches
+it.
+
+And the id is *required* rather than optional because it is the only thing
+stable against a paid rename or a realm move. It is what makes a re-import
+recognise a character instead of duplicating it, and the unique index is on
+`(region, blizzard_character_id)` — the region is part of the key because
+Blizzard numbers its ids per region.
+
+### 10. The client sends an id and nothing else
+
+The import request carries the `blizzardId` of each character — **no name, no
+realm**. The server fetches the account listing with the signed-in player's
+token and accepts only ids that are in it; the name and the realm come from
+*that* list.
+
+The reason is the upstream. The character endpoint of the Blizzard API is
+**public**: it answers for any character in the game, whoever owns it. A
+client that could name a character could have asked the server to import
+somebody else's — and the only thing that stopped it was the character
+already being in our database, which is a **race**, not a guard. The first one
+in would have taken it.
+
+The trusted source was already being fetched — the account list. The fix was
+to use it as a **gate** instead of only as a catalogue.
+
+And a character of *your* account that our database says belongs to another
+player is **rejected**, with a message that says nothing about who has it:
+the character was transferred between Battle.net accounts, and we do not
+transfer it. That is a conscious limitation — a transferred character is
+stuck — because reassigning it would mean trusting our database over the
+provider about who owns a character, and the provider is the source of truth
+about that.
+
+### 11. One refused character does not abort the import
+
+The player chose five characters. One of them being a level 8 toon with no
+specialization is not a reason to lose the other four. The result carries one
+outcome per character chosen — `IMPORTED`, `REFRESHED`, `SKIPPED` or
+`REJECTED` — and the rejected ones carry the reason.
+
+A batch that died because of one member would throw away work the player
+asked for, and would hide the fact that the OTHER four imported fine.
+
 ---
 
 ## Testing
@@ -329,6 +399,11 @@ The rules the suite follows:
 - **Integration tests for the whole inbound path.** The web slice wires the
   *real* service on hand-rolled fakes with a frozen clock: JSON → command →
   use case → `201`/`404`/`422`.
+- **The third parties are stubbed, never called.** Battle.net and Blizzard
+  are answered by stubs built on the JDK's own HTTP server — no new
+  dependency. A test run has no business making a network round trip to
+  somebody else's server, and a test that did would depend on an account
+  that does not belong to the repository.
 
 ---
 
@@ -339,7 +414,7 @@ The rules the suite follows:
 - [WU18] Battle.net OAuth2: the session *is* the identity, the handle retired,
   the dev header deleted, and a player exists only because somebody logged in.
 - [WU19] the Blizzard import: your real characters, with their observed class,
-  specialization, rating and item level.
+  specialization, rating and item level — and no way to invent one.
 - [WU20] the React client: board, publish, request, accept.
 - [WU21] a public deployment (the CV link).
 - A lobby with chat — which needs a `Group` entity that does not exist yet.
@@ -352,7 +427,14 @@ The working list, with the reasoning behind every decision, lives in
 ## Status
 
 Phase 1, no frontend yet. The API is complete for the main flow: sign in with
-Battle.net, register a character, publish availability, browse the board with
-filters and pagination, ask to join, accept, reject, withdraw. The board is
-public; everything else needs a session. The Blizzard API is not integrated
-yet, and the React client does not exist.
+Battle.net, import your characters from Blizzard, publish availability, browse
+the board with filters and pagination, ask to join, accept, reject, withdraw.
+The board is public; everything else needs a session. The React client does
+not exist.
+
+Every rating on the board was **observed**, not claimed: there is no endpoint
+that creates a character by hand, so the numbers other players filter by are
+the numbers the game reported. That also means the board is only as fresh as
+the last import — a known debt, and the reason the background sync (which
+would need a stored refresh token) is written down as out of scope rather
+than quietly forgotten.

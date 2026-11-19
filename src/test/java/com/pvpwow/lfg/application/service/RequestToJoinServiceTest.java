@@ -5,6 +5,7 @@ import com.pvpwow.lfg.application.port.in.RequestToJoin.RequestToJoinCommand;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.CurrentPlayerProvider;
 import com.pvpwow.lfg.application.port.out.ListingLifecycle;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -181,7 +182,7 @@ class RequestToJoinServiceTest {
     }
 
     private static Character character(CharacterId id, PlayerId owner) {
-        return Character.rehydrate(id, owner, new CharacterName("Frostbolt"),
+        return Character.rehydrate(id, owner, new BlizzardCharacterId(161996209L), new CharacterName("Frostbolt"),
                 new Realm("sanguino"), Region.EU, WowClass.MAGE,
                 new GearSnapshot(new ItemLevel(675), NOW),
                 Set.of(Specialization.MAGE_FROST), Map.of());
@@ -208,10 +209,10 @@ class RequestToJoinServiceTest {
         public Optional<Character> findById(CharacterId id) {
             return Optional.ofNullable(stored.get(id));
         }
-
         @Override
-        public boolean alreadyRegistered(Region region, Realm realm, CharacterName name) {
-            return false;
+        public Optional<Character> findByBlizzardId(Region region,
+                                                         BlizzardCharacterId blizzardId) {
+            return Optional.empty();
         }
     }
 

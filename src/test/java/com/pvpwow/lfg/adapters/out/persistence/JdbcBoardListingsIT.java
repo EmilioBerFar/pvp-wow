@@ -9,6 +9,7 @@ import com.pvpwow.lfg.application.port.out.BoardListings.SearchCriteria;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.Listings;
 import com.pvpwow.lfg.application.port.out.Players;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -60,6 +61,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @Testcontainers
 class JdbcBoardListingsIT {
+    /**
+     * The Blizzard ids handed out in this test class. Each character needs its
+     * own: the unique index is on (region, blizzard_character_id).
+     */
+    private static final java.util.concurrent.atomic.AtomicLong BLIZZARD_IDS =
+            new java.util.concurrent.atomic.AtomicLong(161996209L);
 
     @Container
     static PostgreSQLContainer postgres =
@@ -305,7 +312,7 @@ class JdbcBoardListingsIT {
     void hydratesTheWholeAggregateAndThePinnedListingFacts() {
         PlayersFixture.ensure(players, PLAYER);
         Character character = Character.register(PLAYER,
-                new CharacterName("Frostbolt"),
+                new BlizzardCharacterId(nextBlizzardId()), new CharacterName("Frostbolt"),
                 new Realm("Sanguino"),
                 Region.EU,
                 WowClass.MAGE,
@@ -381,7 +388,7 @@ class JdbcBoardListingsIT {
                                      Map<Bracket, PvpStanding> standings) {
         PlayersFixture.ensure(players, PLAYER);
         Character character = Character.register(PLAYER,
-                new CharacterName(name),
+                new BlizzardCharacterId(nextBlizzardId()), new CharacterName(name),
                 new Realm("Sanguino"),
                 region,
                 wowClass,
@@ -424,5 +431,16 @@ class JdbcBoardListingsIT {
 
     private PvpStanding standing(int rating, PvpSeason season, Instant observedAt) {
         return new PvpStanding(new Rating(rating), season, observedAt);
+    }
+
+    /**
+     * A Blizzard id nobody has used yet.
+     *
+     * <p>Every character needs its own: the unique index is on
+     * (region, blizzard_character_id), and that index is the law of the
+     * import - one Blizzard character, one row.
+     */
+    private static long nextBlizzardId() {
+        return BLIZZARD_IDS.incrementAndGet();
     }
 }

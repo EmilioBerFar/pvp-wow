@@ -18,16 +18,19 @@ import static java.util.stream.Collectors.toUnmodifiableSet;
  * (paid renames exist). Two Characters with the same id are the same
  * character even if every other field differs.
  *
- * <p>Lifecycle: exactly two doors, never more. {@link #register} creates
+ * <p>Lifecycle: exactly three doors, never more. {@link #register} creates
  * (identity generated inside); {@link #rehydrate} reconstitutes from
- * persisted state (identity received because it already exists). Behavior
- * methods that mutate state appear only when a real use case demands them —
- * none exists yet.
+ * persisted state (identity received because it already exists);
+ * {@link #observe} re-observes an existing character (identity received AND
+ * kept, because the character is the same one). Behavior methods that mutate
+ * state appear only when a real use case demands them - the Blizzard import
+ * is the one that demanded this one.
  */
 public class Character {
 
     private final CharacterId id;
     private final PlayerId ownerId;
+    private final BlizzardCharacterId blizzardId;
     private final CharacterName name;
     private final Realm realm;
     private final Region region;
@@ -36,11 +39,13 @@ public class Character {
     private final Set<Specialization> specs;
     private final Map<Bracket, PvpStanding> standings;
 
-    private Character(CharacterId id, PlayerId ownerId, CharacterName name, Realm realm,
-                      Region region, WowClass wowClass, GearSnapshot gear,
-                      Set<Specialization> specs, Map<Bracket, PvpStanding> standings) {
+    private Character(CharacterId id, PlayerId ownerId, BlizzardCharacterId blizzardId,
+                      CharacterName name, Realm realm, Region region, WowClass wowClass,
+                      GearSnapshot gear, Set<Specialization> specs,
+                      Map<Bracket, PvpStanding> standings) {
         this.id = Objects.requireNonNull(id, "id must not be null");
         this.ownerId = Objects.requireNonNull(ownerId, "ownerId must not be null");
+        this.blizzardId = Objects.requireNonNull(blizzardId, "blizzardId must not be null");
         this.name = Objects.requireNonNull(name, "name must not be null");
         this.realm = Objects.requireNonNull(realm, "realm must not be null");
         this.region = Objects.requireNonNull(region, "region must not be null");
@@ -56,24 +61,67 @@ public class Character {
     /**
      * Creates a new character. Identity is generated here — callers never
      * invent ids.
+     *
+     * <p>The {@link BlizzardCharacterId} is part of what is created, because
+     * every character in this product comes from the provider: there is no
+     * such thing as a character without one.
      */
-    public static Character register(PlayerId ownerId, CharacterName name, Realm realm,
-                                     Region region, WowClass wowClass, GearSnapshot gear,
+    public static Character register(PlayerId ownerId, BlizzardCharacterId blizzardId,
+                                     CharacterName name, Realm realm, Region region,
+                                     WowClass wowClass, GearSnapshot gear,
                                      Set<Specialization> specs,
                                      Map<Bracket, PvpStanding> standings) {
-        return new Character(new CharacterId(UUID.randomUUID()), ownerId, name, realm, region,
-                wowClass, gear, specs, standings);
+        return new Character(new CharacterId(UUID.randomUUID()), ownerId, blizzardId, name,
+                realm, region, wowClass, gear, specs, standings);
     }
 
     /**
      * Reconstitutes a character from persisted state — the door repositories
      * use. Identity is received, not generated, because it already exists.
      */
-    public static Character rehydrate(CharacterId id, PlayerId ownerId, CharacterName name,
+    public static Character rehydrate(CharacterId id, PlayerId ownerId,
+                                      BlizzardCharacterId blizzardId, CharacterName name,
                                       Realm realm, Region region, WowClass wowClass,
                                       GearSnapshot gear, Set<Specialization> specs,
                                       Map<Bracket, PvpStanding> standings) {
-        return new Character(id, ownerId, name, realm, region, wowClass, gear, specs, standings);
+        return new Character(id, ownerId, blizzardId, name, realm, region, wowClass, gear,
+                specs, standings);
+    }
+
+    /**
+     * The THIRD door: re-observing a character that already exists.
+     *
+     * <p>WU2 said this door would appear "only when a real use case demands
+     * them", and the Blizzard import is that use case: a player whose gear
+     * changed must be able to see the new item level without losing the
+     * character they already published listings with.
+     *
+     * <p>WHY IT REPLACES AND NOT MERGES: the argument is the SEAM. Gear and
+     * standings are OBSERVED facts - what an external source reports right
+     * now. A new observation of an observed fact does not add to the old one,
+     * it supersedes it: a rating of 1500 today does not live next to 1800 from
+     * March, it replaces it. Merging would leave a character carrying two
+     * truths about the same bracket, and only one of them is current.
+     *
+     * <p>WHY THE DECLARED FACTS ARE NOT TOUCHED: {@code specs} says which
+     * specializations the player is WILLING to play. No API can observe a
+     * preference - Blizzard reports the active specialization, which is a
+     * fact about the character, not about the player's intent. So an
+     * observation never rewrites it. The same split the whole domain rests
+     * on, kept on this door too.
+     *
+     * <p>Identity, owner, name, realm, region and class are untouched as
+     * well: they are not observations being refreshed, they are the
+     * character's identity, and an observation does not rename anybody. The
+     * {@link BlizzardCharacterId} travels with them for the same reason: it
+     * is what says this is the same character, so a refresh cannot lose it.
+     *
+     * <p>Returns a NEW character. The aggregate is immutable; this is a
+     * behaviour method, not a mutator.
+     */
+    public Character observe(GearSnapshot gear, Map<Bracket, PvpStanding> standings) {
+        return new Character(id, ownerId, blizzardId, name, realm, region, wowClass, gear,
+                specs, standings);
     }
 
     private void ensureSpecsBelongToTheClass() {
@@ -99,6 +147,16 @@ public class Character {
 
     public PlayerId ownerId() {
         return ownerId;
+    }
+
+    /**
+     * The id Blizzard knows this character by.
+     *
+     * <p>The thing that survives a paid rename and a realm move, and what
+     * makes a re-import recognise a character instead of duplicating it.
+     */
+    public BlizzardCharacterId blizzardId() {
+        return blizzardId;
     }
 
     public CharacterName name() {

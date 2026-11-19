@@ -2,6 +2,7 @@ package com.pvpwow.lfg.adapters.out.persistence;
 
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.Players;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
@@ -50,6 +51,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @Testcontainers
 class JpaCharactersIT {
+    /**
+     * The Blizzard ids handed out in this test class. Each character needs its
+     * own: the unique index is on (region, blizzard_character_id).
+     */
+    private static final java.util.concurrent.atomic.AtomicLong BLIZZARD_IDS =
+            new java.util.concurrent.atomic.AtomicLong(161996209L);
 
     @Container
     static PostgreSQLContainer postgres =
@@ -126,7 +133,7 @@ class JpaCharactersIT {
     @Test
     void anUnrankedCharacterSavesWithNoStandingRows() {
         Character unranked = Character.register(PLAYER,
-                new CharacterName("Tofuru"),
+                new BlizzardCharacterId(nextBlizzardId()), new CharacterName("Tofuru"),
                 new Realm("Illidan"),
                 Region.US,
                 WowClass.ROGUE,
@@ -153,16 +160,29 @@ class JpaCharactersIT {
     }
 
     @Test
-    void alreadyRegisteredSeesThroughRealmPaddingAndNameCase() {
-        saved("Frostbolt");
+    void aCharacterIsFoundByTheBlizzardIdAndNotByItsName() {
+        Character saved = saved("Frostbolt");
 
-        assertThat(characters.alreadyRegistered(
-                Region.EU, new Realm("  SANGUINO "), new CharacterName("frostbolt")))
-                .isTrue();
-        assertThat(characters.alreadyRegistered(
-                Region.US, new Realm("Sanguino"), new CharacterName("Frostbolt")))
-                .as("same realm name in another region is a different character")
-                .isFalse();
+        // The id is what recognises a character: a paid rename changes the
+        // name and the realm, and the character is still the same one.
+        assertThat(characters.findByBlizzardId(Region.EU, saved.blizzardId()))
+                .isPresent()
+                .get()
+                .satisfies(found -> {
+                    assertThat(found.id()).isEqualTo(saved.id());
+                    assertThat(found.name()).isEqualTo(saved.name());
+                });
+    }
+
+    @Test
+    void theSameBlizzardIdInAnotherRegionIsAnotherCharacter() {
+        Character saved = saved("Frostbolt");
+
+        // The provider numbers its ids per region, so the id alone is not
+        // unique across regions.
+        assertThat(characters.findByBlizzardId(Region.US, saved.blizzardId()))
+                .as("the same id in another region is a different character")
+                .isEmpty();
     }
 
     @Test
@@ -194,7 +214,7 @@ class JpaCharactersIT {
 
     private Character ranked(String name) {
         return Character.register(PLAYER,
-                new CharacterName(name),
+                new BlizzardCharacterId(nextBlizzardId()), new CharacterName(name),
                 new Realm("Sanguino"),
                 Region.EU,
                 WowClass.MAGE,
@@ -209,5 +229,16 @@ class JpaCharactersIT {
 
     private int countIn(String table) {
         return jdbc.queryForObject("select count(*) from " + table, Integer.class);
+    }
+
+    /**
+     * A Blizzard id nobody has used yet.
+     *
+     * <p>Every character needs its own: the unique index is on
+     * (region, blizzard_character_id), and that index is the law of the
+     * import - one Blizzard character, one row.
+     */
+    private static long nextBlizzardId() {
+        return BLIZZARD_IDS.incrementAndGet();
     }
 }

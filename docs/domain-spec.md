@@ -1092,6 +1092,191 @@ journey, not to hide it. What is true NOW is in this section.
   is a network round trip to a third party, and CI has no business making it;
   everything on our side of the redirect is covered.
 
+## WU19 - Importing characters from Blizzard
+
+WU18 made the session the credential. WU19 uses that credential for the first
+thing it was scoped for: the `wow.profile` scope was requested at login, and
+now it is used. The player signs in with Battle.net, sees the characters of
+their account, and picks the ones they want on the board.
+
+- **THE CHARACTER LIST IS ONE CALL, AND THE PLAYER CHOOSES.** The account
+  listing is `GET /profile/user/wow`: one call, and it tells the player what
+  they could import. The details of a character are more expensive, so they
+  are only fetched for the characters the player CHOSE. A player with fifteen
+  toons who wants one pays for one.
+- **THERE IS NO LEVEL FILTER... NO, THERE IS: THE CHARACTERS OF MAXIMUM LEVEL.**
+  The listing shows the characters whose level is the maximum AMONG THE
+  ACCOUNT'S OWN CHARACTERS, so it needs no number that can go stale with an
+  expansion - and a fixed cap (level 70) would have to change every
+  expansion. The cost of the rule is real and stated: an account whose only
+  character is below the maximum sees an EMPTY list.
+- **THE ACCOUNT LIST IS THE GATE, AND THAT IS THE SECURITY OF THIS UNIT.**
+  The client sends the `blizzardId` of each character it wants - and NOTHING
+  ELSE. No name, no realm.
+  The reason is the upstream: the character endpoint of the Blizzard API is
+  PUBLIC. It answers for any character in the game, whoever owns it. So a
+  client that could name a character could ask the server to import somebody
+  else's - and the only thing that used to stop it was the character already
+  being in our database, which is a RACE, not a guard: the first one in would
+  have taken it.
+  So the server fetches `/profile/user/wow` with the token of the signed-in
+  player - the one endpoint that answers with THEIR characters - and accepts
+  only ids that are in that list. The name and the realm come from THAT
+  LIST, never from the client. An id that is not in the account is rejected
+  with a message that says nothing about who does own it.
+- **A CHARACTER OF THE ACCOUNT THAT BELONGS TO ANOTHER PLAYER IS REJECTED,
+  NOT TRANSFERRED.** Blizzard says the character is in this account now; our
+  database says another player has it. That means the character was
+  transferred between Battle.net accounts. We do NOT transfer it: the answer
+  is a rejection that says nothing about who has it, for the same reason a
+  404 says nothing.
+  The consequence is a CONSCIOUS LIMITATION, written down instead of
+  discovered later: **a character transferred between Battle.net accounts is
+  stuck in our application.** The alternative - reassigning it - would mean
+  trusting our database over the provider about who owns a character, and
+  the provider is the source of truth about that.
+- **THE REGION IS A PARAMETER, BECAUSE THE REGION IS NOT THE PLAYER'S.**
+  A Battle.net account can hold several World of Warcraft accounts, one per
+  region - EU and US are separate WoW accounts under one Battle.net, with
+  separate progress. Each region has its own namespace, so an import asks
+  for the region and calls that region's host. The characters it reports
+  belong to that region, and they land with the region of the realm they are
+  really on. The host decides the region; the domain's `Region` knows
+  nothing about hosts.
+- **THE COST, MEASURED.** Listing the account: 1 call. Per chosen character:
+  1 for the profile (class, equipped item level, active specialization), 1
+  for the PvP summary, and 1 per bracket the summary says exists. So a
+  character with no arena record costs 2 and one with both brackets costs 4;
+  a five-character import costs between 11 and 16 calls. The summary is asked
+  FIRST on purpose: it says WHICH brackets exist, and asking for a bracket
+  the character never played spends a call to learn a 404.
+- **THE RATING IS NOT IN THE PROFILE.** The character endpoint links to the
+  PvP summary; the summary carries only LINKS to the brackets, never the
+  ratings. So a rating needs one call per bracket. That is a fact of the
+  upstream, not a choice.
+- **A 404 FROM A BRACKET IS "UNRANKED", NOT A FAILURE.** A bracket the
+  character has never played answers 404, and the domain says the same thing
+  with an absent `PvpStanding`. The upstream's not-found and our unranked
+  mean the same thing, so the two vocabularies line up.
+- **THE BLIZZARD CHARACTER ID IS PART OF THE AGGREGATE.** It is the only
+  thing stable against a paid rename or a realm move, and it is what makes a
+  re-import recognise a character instead of duplicating it. So it lives in
+  `Character` as `BlizzardCharacterId`, REQUIRED - and `observe()` keeps it,
+  because it is identity, not a fact being refreshed. The natural key
+  (region, realm, name) is still unique in the database - it is the game's
+  own rule - but it is no longer what RECOGNISES a character.
+- **THE UNIQUE INDEX IS ON (region, blizzard_character_id), NOT ON THE ID.**
+  The provider numbers its ids per region: the character 42 of the EU realms
+  and the character 42 of the US realms are different characters, and an
+  index on the id alone would reject the second one.
+- **MANUAL REGISTRATION IS GONE, AND THAT IS THE USER'S DECISION.**
+  `RegisterCharacter`, its service, its controller, its request DTO and its
+  tests are deleted, and with them the endpoint `POST /api/characters`. The
+  reason: a board where anybody can insert a character with any rating is a
+  board nobody can trust. Without a Battle.net account there is no entry,
+  and every rating on the board was observed rather than claimed.
+  `Characters.alreadyRegistered` goes with it, and `findByNaturalKey` is
+  replaced by `findByBlizzardId`, because the id is what recognises a
+  character.
+- **A REFUSED CHARACTER DOES NOT ABORT THE IMPORT.** The player chose five
+  characters; one of them being a level 8 toon with no specialization is not
+  a reason to lose the other four. The result carries one outcome per
+  character chosen: `IMPORTED`, `REFRESHED`, `SKIPPED` (it belongs to
+  another player, or Blizzard does not know it) or `REJECTED` (the domain
+  refused it, or the class or specialization is one we do not know) - and
+  the rejected ones carry the reason.
+- **THE NAME AND THE REALM ARE VALIDATED BEFORE THE CALL, AND THE PATH IS
+  ENCODED.** The name and the realm are domain values, and a name the domain
+  would refuse is not worth a round trip to Blizzard. So they are built
+  BEFORE the upstream is asked, and a refusal is one outcome of the batch
+  like any other.
+  The segments of the upstream's path are then PERCENT-ENCODED, because the
+  slug of a realm like "festung-der-stürme" carries an accent, and a
+  segment that carried a slash would change the path instead of naming a
+  character. The encoding is the one for PATHS, not the one for form
+  bodies: `URLEncoder` turns a space into `+`, which in a path means a
+  literal plus sign.
+- **THE PORT SPEAKS RAW JAVA, NOT BLIZZARD'S JSON.** The out port exposes
+  `long`, `String`, `int` and a `Map<Bracket, Rating>`, plus three domain
+  types the use case needs for its work. Every record of Blizzard's JSON
+  lives inside the adapter, where it is invisible to the application layer.
+  The adapter translates the FORMAT; the domain decides the VALIDITY.
+- **THE NAMES ARE TRANSLATED IN THE APPLICATION LAYER.** `BattleNetNames`
+  maps "Mage" to `WowClass.MAGE` and ("Mage", "Frost") to
+  `Specialization.MAGE_FROST`. The NAME and not the numeric id: the id space
+  belongs to Blizzard and can be renumbered, while the name is what our enum
+  spells out. And the PAIR, because the specialization names repeat across
+  classes - "Frost" is Mage, Death Knight and Warlock.
+- **THE DECLARED SPECS ARE THE PLAYER'S.** A character is CREATED with the
+  active specialization Blizzard reports, because that is the only
+  specialization the player could have declared without typing it. It is a
+  STARTING POINT: the specs of a character are what the player is willing to
+  play, and a player who wants to queue as Frost AND Arcane says so
+  afterwards. Refreshing a character never touches them.
+- **THE RATING KEEPS THE SEASON THE UPSTREAM REPORTED.** The pvp-bracket
+  endpoint returns the real Blizzard season id next to the rating, so a
+  rating is filed under the season it belongs to - not under the bootstrap
+  `pvp.current-season`, which was a guess and is wrong the moment the first
+  import happens.
+- **THE TOKEN LIVES IN THE DATABASE, AND THE SECRET DOES NOT.** WU18 left the
+  Battle.net access token in the heap of one process, which would have made
+  the import fail with an unexplained 401 after a restart. The authorized
+  client is now persisted with `JdbcOAuth2AuthorizedClientService` (V8), and
+  its table stores the registration id and the tokens - NOT the
+  `ClientRegistration`, which is where the client secret lives. The secret
+  therefore never reaches a row anybody can read, and never reaches the
+  session. The access token IS a credential and IS stored in the clear in
+  `oauth2_authorized_client`: it is scoped to `wow.profile`, and the
+  database that holds it is the one that already holds the sessions that
+  authenticate the player. Battle.net's access tokens are valid for about 24
+  hours (the API documents `expires_in: 86399`); after that the player signs
+  in again. No refresh token is stored, and none is needed: the import
+  happens while the player is signed in, and a refresh token would be the
+  most dangerous credential in the whole project.
+- **THE `openid` SCOPE WAS REMOVED, AND THE REASON IS SIMPLICITY.** Battle.net
+  is used as a plain OAuth2 provider: the scope `openid` was dropped, so
+  Spring Security uses `DefaultOAuth2UserService` instead of the OIDC
+  components, and the identity is read from `/userinfo` - the `sub` and the
+  `battletag` - which is what `user-name-attribute: sub` already asked for.
+  The reason is that the product needs NOTHING from OpenID Connect: there is
+  no id_token to validate, no JWKS to fetch, no issuer to check. Plain OAuth2
+  is the smaller thing that does the job.
+  A NOTE ON WHAT THE TEST PROVES: `BattleNetLoginFlowIT` performs the whole
+  authorization-code dance against a STUB of our own, so it proves that the
+  flow WORKS - not what the real provider answers. It found a real defect
+  (the stub answered without an id_token and the OIDC path demanded one),
+  but the honest statement is the one above: we chose the simpler protocol.
+  Whether the real Battle.net would have answered differently is UNVERIFIED,
+  and it is listed with the handshake in "what the suite cannot prove".
+- **THE LOGIN IS NOW PROVEN END TO END.** `BattleNetLoginFlowIT` performs
+  the whole authorization-code dance against a stub Battle.net - the browser
+  goes to the authorization endpoint, comes back with a code, the backend
+  exchanges it for a token - and then looks at the database. It is the only
+  test that could: the `oauth2Login()` post-processor writes the authorized
+  client into a MOCK repository, so a test that signed in that way and then
+  inspected `spring_session_attributes` would have found no secret and would
+  have proved nothing.
+- **THE TESTS NEVER CALL A THIRD PARTY.** The Blizzard client takes its base
+  URL from `pvp.blizzard.base-url`, which is empty in production and points
+  at a stub in the tests. The stub keeps the upstream's rules: the paths, the
+  summary that lists only the brackets a character HAS rated, and the 404
+  for a bracket nobody played. `StubBattleNet` does the same for the
+  provider itself, on the JDK's own HTTP server - no new dependency.
+- **Tests.** `BlizzardProfileClientTest` (13: the upstream's shapes, the cost
+  of the calls, the 404 that means unranked, the encoded path segments),
+  `ImportCharactersServiceTest` (14: the import, the gate that only the
+  account can pass, the refused character that does not abort the batch, the
+  refresh that leaves the specs alone), `ImportCharactersIT` (7: the import
+  end to end against a stub, and the id that is not in the account),
+  `BattleNetAuthorizedClientIT` (7: the token in
+  the database, the secret nowhere), `BattleNetLoginFlowIT` (4: the real
+  login flow), `CharacterTest` (19: the aggregate, the third door, the
+  required Blizzard id) and `BlizzardCharacterIdTest` (4).
+- **What the suite cannot prove.** The handshake with the REAL Battle.net
+  and the REAL Blizzard API. Both are network round trips to a third party,
+  and CI has no business making them; everything on our side of the
+  redirect, and everything on our side of the API, is covered.
+
 ## Error strategy (decided before the application layer)
 
 Errors have three audiences, and each is served at a different layer:
@@ -1141,8 +1326,14 @@ wrong.
 
 The domain-phase exclusions — ports, repositories, use cases, controllers —
 are no longer excluded: that phase is complete. Still out of scope until their
-own steps: the Blizzard API client (sync step), stored Battle.net refresh
-tokens, CSRF protection for a cross-origin client, React.
+own steps: stored Battle.net refresh tokens, CSRF protection for a
+cross-origin client, React.
+
+The Blizzard API client is no longer excluded: WU19 built it, for the import
+and nothing else. What stays out of scope is the BACKGROUND SYNC - a job that
+refreshes a character's gear and ratings on its own schedule. That would need
+a stored, encrypted refresh token, and the product does not need it: the
+import happens while the player is signed in.
 
 ## Next step
 
@@ -1150,18 +1341,16 @@ WU12 (REST exposure, keyset pagination, bean wiring and the configured TTL),
 WU13 (read your own character, with total anti-enumeration), WU14 (declared
 presence + a blank generic 500), WU15 (the group handshake and the facts of a
 finished listing), WU16 (the daily retention sweep), WU17 (real players and the
-owner foreign key) and WU18 (Battle.net login and the session that carries it)
-are done.
+owner foreign key), WU18 (Battle.net login and the session that carries it)
+and WU19 (importing characters from Blizzard) are done.
 
-Next: WU19 — import characters and their observed facts from Blizzard. The
-access token is already in the session (scope `wow.profile` was requested at
-login), so the import is a use case the signed-in player triggers; nothing has
-to be stored to make it possible.
-
-Then: WU20 (the React client: board, publish, request, accept) and WU21 (a
-public deployment for the CV). WU20 owns two debts this unit left explicit:
-CSRF protection once the cookie becomes cross-site, and the login redirect that
-currently points at `/`.
+Next: WU20 (the React client: board, publish, request, accept) and WU21 (a
+public deployment for the CV). WU20 owns three debts this unit left explicit:
+CSRF protection once the cookie becomes cross-site, the login redirect that
+currently points at `/`, and the specs of a character - which the player can
+change today only through the database, because the import is the only way a
+character is created and it starts from the active specialization Blizzard
+reports.
 
 Still open afterwards: the lobby with chat (it needs a Group entity, which
 does not exist yet) and a listing read-by-id resource.

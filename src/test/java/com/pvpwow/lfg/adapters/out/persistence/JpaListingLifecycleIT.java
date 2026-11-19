@@ -4,6 +4,7 @@ import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.ListingLifecycle;
 import com.pvpwow.lfg.application.port.out.Listings;
 import com.pvpwow.lfg.application.port.out.Players;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
@@ -57,6 +58,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @Testcontainers
 class JpaListingLifecycleIT {
+    /**
+     * The Blizzard ids handed out in this test class. Each character needs its
+     * own: the unique index is on (region, blizzard_character_id).
+     */
+    private static final java.util.concurrent.atomic.AtomicLong BLIZZARD_IDS =
+            new java.util.concurrent.atomic.AtomicLong(161996209L);
 
     @Container
     static PostgreSQLContainer postgres =
@@ -293,7 +300,7 @@ class JpaListingLifecycleIT {
 
     private Character savedCharacter(String name, PlayerId owner) {
         PlayersFixture.ensure(players, owner);
-        Character character = Character.register(owner, new CharacterName(name),
+        Character character = Character.register(owner, new BlizzardCharacterId(nextBlizzardId()), new CharacterName(name),
                 new Realm("Sanguino"), Region.EU, WowClass.MAGE,
                 new GearSnapshot(new ItemLevel(675), NOW),
                 Set.of(Specialization.MAGE_FROST), Map.of());
@@ -341,5 +348,16 @@ class JpaListingLifecycleIT {
         return jdbc.queryForObject(
                 "select status from join_requests where id = ?", String.class,
                 joinRequestId.value());
+    }
+
+    /**
+     * A Blizzard id nobody has used yet.
+     *
+     * <p>Every character needs its own: the unique index is on
+     * (region, blizzard_character_id), and that index is the law of the
+     * import - one Blizzard character, one row.
+     */
+    private static long nextBlizzardId() {
+        return BLIZZARD_IDS.incrementAndGet();
     }
 }

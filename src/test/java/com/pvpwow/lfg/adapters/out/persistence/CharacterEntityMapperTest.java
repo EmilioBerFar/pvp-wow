@@ -1,5 +1,6 @@
 package com.pvpwow.lfg.adapters.out.persistence;
 
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -35,7 +36,7 @@ class CharacterEntityMapperTest {
     void roundTripsEveryFieldOfTheAggregate() {
         Character original = Character.register(
                 new PlayerId(UUID.randomUUID()),
-                new CharacterName("Éowyn"),
+                new BlizzardCharacterId(161996209L), new CharacterName("Éowyn"),
                 new Realm("Los  Errantes"),
                 Region.EU,
                 WowClass.MAGE,
@@ -64,7 +65,7 @@ class CharacterEntityMapperTest {
     void anUnrankedCharacterRoundTripsWithAnEmptyStandingsMap() {
         Character unranked = Character.register(
                 new PlayerId(UUID.randomUUID()),
-                new CharacterName("Tofuru"),
+                new BlizzardCharacterId(161996209L), new CharacterName("Tofuru"),
                 new Realm("Illidan"),
                 Region.US,
                 WowClass.ROGUE,

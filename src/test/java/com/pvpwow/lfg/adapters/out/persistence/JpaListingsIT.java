@@ -4,6 +4,7 @@ import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.ListingLifecycle;
 import com.pvpwow.lfg.application.port.out.Listings;
 import com.pvpwow.lfg.application.port.out.Players;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Bracket;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -59,6 +60,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @Testcontainers
 class JpaListingsIT {
+    /**
+     * The Blizzard ids handed out in this test class. Each character needs its
+     * own: the unique index is on (region, blizzard_character_id).
+     */
+    private static final java.util.concurrent.atomic.AtomicLong BLIZZARD_IDS =
+            new java.util.concurrent.atomic.AtomicLong(161996209L);
 
     @Container
     static PostgreSQLContainer postgres =
@@ -253,7 +260,7 @@ class JpaListingsIT {
     private Character savedCharacter(String name) {
         PlayersFixture.ensure(players, PLAYER);
         Character character = Character.register(PLAYER,
-                new CharacterName(name),
+                new BlizzardCharacterId(nextBlizzardId()), new CharacterName(name),
                 new Realm("Sanguino"),
                 Region.EU,
                 WowClass.MAGE,
@@ -282,5 +289,16 @@ class JpaListingsIT {
 
     private int countIn(String table) {
         return jdbc.queryForObject("select count(*) from " + table, Integer.class);
+    }
+
+    /**
+     * A Blizzard id nobody has used yet.
+     *
+     * <p>Every character needs its own: the unique index is on
+     * (region, blizzard_character_id), and that index is the law of the
+     * import - one Blizzard character, one row.
+     */
+    private static long nextBlizzardId() {
+        return BLIZZARD_IDS.incrementAndGet();
     }
 }

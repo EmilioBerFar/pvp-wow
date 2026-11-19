@@ -43,6 +43,21 @@
 			<artifactId>spring-boot-starter-webmvc</artifactId>
 		</dependency>
 
+		<!-- The Blizzard profile API, called with RestClient.
+		     Boot 4 split its auto-configurations into modules, and the
+		     pre-configured RestClient.Builder - the one that knows the
+		     application's message converters and timeouts - lives in
+		     spring-boot-restclient. Without it there is no builder bean at
+		     all, and the application fails to start.
+		     The module, NOT the bare org.springframework:spring-web jar:
+		     RestClient.create() works without it, but then the client knows
+		     nothing about the application's converters, and the JSON of
+		     Battle.net arrives as an unparsed document. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-restclient</artifactId>
+		</dependency>
+
 		<!-- Real authentication. The OAuth2 client starter already brings
 		     spring-boot-starter-security with it; adding both would only make
 		     the dependency tree lie about what is needed. -->

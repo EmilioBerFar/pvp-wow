@@ -1,6 +1,7 @@
 package com.pvpwow.lfg.adapters.out.persistence;
 
 import com.pvpwow.lfg.domain.character.Bracket;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -35,6 +36,7 @@ final class CharacterEntityMapper {
         CharacterEntity entity = new CharacterEntity();
         entity.setId(character.id().value());
         entity.setOwnerId(character.ownerId().value());
+        entity.setBlizzardCharacterId(character.blizzardId().value());
         entity.setName(character.name().value());
         entity.setRealm(character.realm().value());
         entity.setRegion(character.region());
@@ -65,6 +67,7 @@ final class CharacterEntityMapper {
         return Character.rehydrate(
                 new CharacterId(entity.id()),
                 new PlayerId(entity.ownerId()),
+                new BlizzardCharacterId(entity.blizzardCharacterId()),
                 new CharacterName(entity.name()),
                 new Realm(entity.realm()),
                 entity.region(),

@@ -65,6 +65,16 @@ class CharacterEntity {
     @Column(name = "gear_observed_at", nullable = false)
     private Instant gearObservedAt;
 
+    /**
+     * The id Blizzard knows this character by.
+     *
+     * <p>REQUIRED, because every character comes from the import. It is the
+     * thing that survives a paid rename and a realm move, and what makes a
+     * re-import recognise a character instead of duplicating it.
+     */
+    @Column(name = "blizzard_character_id", nullable = false)
+    private long blizzardCharacterId;
+
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "character_specs",
             joinColumns = @JoinColumn(name = "character_id"))
@@ -115,6 +125,10 @@ class CharacterEntity {
         return gearObservedAt;
     }
 
+    long blizzardCharacterId() {
+        return blizzardCharacterId;
+    }
+
     Set<Specialization> specs() {
         return specs;
     }
@@ -153,6 +167,10 @@ class CharacterEntity {
 
     void setGearObservedAt(Instant gearObservedAt) {
         this.gearObservedAt = gearObservedAt;
+    }
+
+    void setBlizzardCharacterId(long blizzardCharacterId) {
+        this.blizzardCharacterId = blizzardCharacterId;
     }
 
     void setSpecs(Set<Specialization> specs) {

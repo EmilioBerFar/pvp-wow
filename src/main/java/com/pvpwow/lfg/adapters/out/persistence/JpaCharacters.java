@@ -1,6 +1,7 @@
 package com.pvpwow.lfg.adapters.out.persistence;
 
 import com.pvpwow.lfg.application.port.out.Characters;
+import com.pvpwow.lfg.domain.character.BlizzardCharacterId;
 import com.pvpwow.lfg.domain.character.Character;
 import com.pvpwow.lfg.domain.character.CharacterId;
 import com.pvpwow.lfg.domain.character.CharacterName;
@@ -72,8 +73,9 @@ final class JpaCharacters implements Characters {
     }
 
     @Override
-    public boolean alreadyRegistered(Region region, Realm realm, CharacterName name) {
+    public Optional<Character> findByBlizzardId(Region region, BlizzardCharacterId blizzardId) {
         return reads.read(() ->
-                repository.existsIgnoringNameCase(region, realm.value(), name.value()));
+                repository.findByBlizzardCharacterId(region, blizzardId.value())
+                        .map(CharacterEntityMapper::toDomain));
     }
 }

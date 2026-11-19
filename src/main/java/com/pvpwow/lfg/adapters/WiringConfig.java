@@ -3,8 +3,8 @@ package com.pvpwow.lfg.adapters;
 import com.pvpwow.lfg.application.port.in.AcceptJoinRequest;
 import com.pvpwow.lfg.application.port.in.GetCharacter;
 import com.pvpwow.lfg.application.port.in.GetCurrentPlayer;
+import com.pvpwow.lfg.application.port.in.ImportCharacters;
 import com.pvpwow.lfg.application.port.in.PublishListing;
-import com.pvpwow.lfg.application.port.in.RegisterCharacter;
 import com.pvpwow.lfg.application.port.in.RejectJoinRequest;
 import com.pvpwow.lfg.application.port.in.RequestToJoin;
 import com.pvpwow.lfg.application.port.in.RunRetentionSweep;
@@ -12,6 +12,7 @@ import com.pvpwow.lfg.application.port.in.SearchBoard;
 import com.pvpwow.lfg.application.port.in.SignInWithBattleNet;
 import com.pvpwow.lfg.application.port.in.WithdrawJoinRequest;
 import com.pvpwow.lfg.application.port.in.WithdrawListing;
+import com.pvpwow.lfg.application.port.out.BattleNetCharacters;
 import com.pvpwow.lfg.application.port.out.BoardListings;
 import com.pvpwow.lfg.application.port.out.Characters;
 import com.pvpwow.lfg.application.port.out.CurrentPlayerProvider;
@@ -23,8 +24,8 @@ import com.pvpwow.lfg.application.port.out.Seasons;
 import com.pvpwow.lfg.application.service.AcceptJoinRequestService;
 import com.pvpwow.lfg.application.service.GetCharacterService;
 import com.pvpwow.lfg.application.service.GetCurrentPlayerService;
+import com.pvpwow.lfg.application.service.ImportCharactersService;
 import com.pvpwow.lfg.application.service.PublishListingService;
-import com.pvpwow.lfg.application.service.RegisterCharacterService;
 import com.pvpwow.lfg.application.service.RejectJoinRequestService;
 import com.pvpwow.lfg.application.service.RequestToJoinService;
 import com.pvpwow.lfg.application.service.RetentionSweepService;
@@ -53,11 +54,11 @@ public class WiringConfig {
     }
 
     @Bean
-    RegisterCharacter registerCharacter(Characters characters,
-                                        CurrentPlayerProvider currentPlayer,
-                                        Seasons seasons,
-                                        Clock clock) {
-        return new RegisterCharacterService(characters, currentPlayer, seasons, clock);
+    ImportCharacters importCharacters(BattleNetCharacters battleNet,
+                                      Characters characters,
+                                      CurrentPlayerProvider currentPlayer,
+                                      Clock clock) {
+        return new ImportCharactersService(battleNet, characters, currentPlayer, clock);
     }
 
     @Bean
